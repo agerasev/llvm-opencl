@@ -498,6 +498,26 @@ CWriter::printTypeName(raw_ostream &Out, Type *Ty, bool isSigned,
 
   case Type::PointerTyID: {
     Type *ElTy = Ty->getPointerElementType();
+    switch (Ty->getPointerAddressSpace()) {
+      case 0:
+        Out << "__private ";
+        break;
+      case 1:
+        Out << "__global ";
+        break;
+      case 2:
+        Out << "__constant ";
+        break;
+      case 3:
+        Out << "__local ";
+        break;
+      default:
+#ifndef NDEBUG
+      errs() << "Invalid address space " << Ty->getPointerAddressSpace() << "\n";
+#endif
+      errorWithMessage("Encountered Invalid Address Space");
+      break;
+    }
     return printTypeName(Out, ElTy, false) << '*';
   }
 
@@ -672,6 +692,11 @@ CWriter::printFunctionProto(raw_ostream &Out, FunctionType *FTy,
 
   switch (Attrs.second) {
   case CallingConv::C:
+    break;
+  case CallingConv::SPIR_FUNC:
+    break;
+  case CallingConv::SPIR_KERNEL:
+    Out << " __kernel";
     break;
   case CallingConv::X86_StdCall:
     Out << " __stdcall";
