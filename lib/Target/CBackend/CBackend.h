@@ -34,6 +34,7 @@
 #include <set>
 
 #include "IDMap.h"
+#include "CBuiltIns.h"
 
 namespace llvm_cbe {
 
@@ -95,6 +96,8 @@ class CWriter : public FunctionPass, public InstVisitor<CWriter> {
     bool ConstantFloatTy : 1;
     bool BitCastUnion : 1;
   } UsedHeaders;
+
+  CBuiltIns builtins;
 
 #define USED_HEADERS_FLAG(Name)                                                \
   void headerUse##Name() { UsedHeaders.Name = true; }                          \

@@ -23,13 +23,17 @@
 #include "llvm/Support/Host.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/TargetRegistry.h"
+#include "llvm/Demangle/Demangle.h"
 
 #include "TopologicalSorter.h"
+#include "CBuiltIns.h"
 
 #include <algorithm>
 #include <cstdio>
 
 #include <iostream>
+
+#undef NDEBUG
 
 // Jackson Korba 9/29/14
 #ifndef DEBUG_TYPE
@@ -1906,6 +1910,7 @@ void CWriter::generateHeader(Module &M) {
     }
 
     // Skip a few functions that have already been defined in headers
+    /*
     if (I->getName() == "setjmp" || I->getName() == "longjmp" ||
         I->getName() == "_setjmp" || I->getName() == "siglongjmp" ||
         I->getName() == "sigsetjmp" || I->getName() == "pow" ||
@@ -1918,14 +1923,42 @@ void CWriter::generateHeader(Module &M) {
         I->getName() == "_alloca" || I->getName() == "_chkstk" ||
         I->getName() == "__chkstk" || I->getName() == "___chkstk_ms")
       continue;
+    */
+    
+    bool builtin = false;
+    std::string name;
+    ItaniumPartialDemangler dmg;
+    if (dmg.partialDemangle(I->getName().data())) {
+#ifndef NDEBUG
+      errs() << "Cannot demangle function '" << I->getName() << "'\n";
+#endif
+    } else {
+      size_t size = 0;
+      char *buf = dmg.getFunctionName(nullptr, &size);
+      if (buf == nullptr) {
+        errorWithMessage("Demangle error");
+      }
+      name = std::string(buf);
+      buf = dmg.finishDemangle(buf, &size);
+      if (buf == nullptr) {
+        errorWithMessage("Demangle error");
+      }
+      Out << "// " << buf << "\n";
+      builtin = builtins.isBuiltIn(buf);
+      std::free(buf);
+    }
 
-    if (I->hasLocalLinkage())
-      Out << "static ";
-    if (I->hasExternalWeakLinkage())
-      Out << "extern ";
-    printFunctionProto(Out, &*I);
+    if (builtin) {
+      Out << "#define " << I->getName() << " " << name << "\n";
+    } else {
+      if (I->hasLocalLinkage())
+        Out << "static ";
+      if (I->hasExternalWeakLinkage())
+        Out << "extern ";
+      printFunctionProto(Out, &*I);
+      Out << ";\n";
+    }
 
-    Out << ";\n";
   }
 
   // Output the global variable definitions and contents...
