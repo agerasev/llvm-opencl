@@ -91,50 +91,20 @@ class CWriter : public FunctionPass, public InstVisitor<CWriter> {
   unsigned LastAnnotatedSourceLine = 0;
 
   struct {
-    bool BuiltinAlloca : 1;
-    bool Unreachable : 1;
-    bool NoReturn : 1;
-    bool ExternalWeak : 1;
-    bool AttributeWeak : 1;
-    bool Hidden : 1;
-    bool AttributeList : 1;
     bool UnalignedLoad : 1;
-    bool MsAlign : 1;
-    bool NanInf : 1;
-    bool Int128 : 1;
-    bool ThreadFence : 1;
-    bool StackSaveRestore : 1;
     bool ConstantDoubleTy : 1;
     bool ConstantFloatTy : 1;
-    bool ConstantFP80Ty : 1;
-    bool ConstantFP128Ty : 1;
     bool BitCastUnion : 1;
-    bool ForceInline : 1;
   } UsedHeaders;
 
 #define USED_HEADERS_FLAG(Name)                                                \
   void headerUse##Name() { UsedHeaders.Name = true; }                          \
   bool headerInc##Name() const { return UsedHeaders.Name; }
 
-  USED_HEADERS_FLAG(BuiltinAlloca)
-  USED_HEADERS_FLAG(Unreachable)
-  USED_HEADERS_FLAG(NoReturn)
-  USED_HEADERS_FLAG(ExternalWeak)
-  USED_HEADERS_FLAG(AttributeWeak)
-  USED_HEADERS_FLAG(Hidden)
-  USED_HEADERS_FLAG(AttributeList)
   USED_HEADERS_FLAG(UnalignedLoad)
-  USED_HEADERS_FLAG(MsAlign)
-  USED_HEADERS_FLAG(NanInf)
-  USED_HEADERS_FLAG(Int128)
-  USED_HEADERS_FLAG(ThreadFence)
-  USED_HEADERS_FLAG(StackSaveRestore)
   USED_HEADERS_FLAG(ConstantDoubleTy)
   USED_HEADERS_FLAG(ConstantFloatTy)
-  USED_HEADERS_FLAG(ConstantFP80Ty)
-  USED_HEADERS_FLAG(ConstantFP128Ty)
   USED_HEADERS_FLAG(BitCastUnion)
-  USED_HEADERS_FLAG(ForceInline)
 
   llvm::SmallSet<CmpInst::Predicate, 26> FCmpOps;
   void headerUseFCmpOp(CmpInst::Predicate P);
@@ -165,8 +135,6 @@ private:
 
   void forwardDeclareStructs(raw_ostream &Out, Type *Ty,
                              std::set<Type *> &TypesPrinted);
-
-  raw_ostream &printFunctionAttributes(raw_ostream &Out, AttributeList Attrs);
 
   raw_ostream &
   printFunctionProto(raw_ostream &Out, FunctionType *Ty,
@@ -278,7 +246,6 @@ private:
   void visitResumeInst(ResumeInst &I) {
     llvm_unreachable("DwarfEHPrepare pass didn't work!");
   }
-  void visitUnreachableInst(UnreachableInst &I);
 
   void visitPHINode(PHINode &I);
   void visitBinaryOperator(BinaryOperator &I);
@@ -291,7 +258,6 @@ private:
   void visitInlineAsm(CallInst &I);
   bool visitBuiltinCall(CallInst &I, Intrinsic::ID ID);
 
-  void visitAllocaInst(AllocaInst &I);
   void visitLoadInst(LoadInst &I);
   void visitStoreInst(StoreInst &I);
   void visitFenceInst(FenceInst &I);
