@@ -14,7 +14,6 @@
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
-#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -198,8 +197,6 @@ private:
   void writeMemoryAccess(Value *Operand, Type *OperandType, bool IsVolatile,
                          unsigned Alignment);
 
-  std::string InterpretASMConstraint(InlineAsm::ConstraintInfo &c);
-
   bool lowerIntrinsics(Function &F);
   /// Prints the definition of the intrinsic function F. Supports the
   /// intrinsics which need to be explicitly defined in the CBackend.
@@ -231,7 +228,6 @@ private:
   bool isAddressExposed(Value *V) const;
   bool isInlinableInst(Instruction &I) const;
   AllocaInst *isDirectAlloca(Value *V) const;
-  bool isInlineAsm(Instruction &I) const;
 
   // Instruction visitation functions
   friend class InstVisitor<CWriter>;
@@ -255,7 +251,6 @@ private:
   void visitCastInst(CastInst &I);
   void visitSelectInst(SelectInst &I);
   void visitCallInst(CallInst &I);
-  void visitInlineAsm(CallInst &I);
   bool visitBuiltinCall(CallInst &I, Intrinsic::ID ID);
 
   void visitLoadInst(LoadInst &I);

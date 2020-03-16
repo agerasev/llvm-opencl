@@ -116,13 +116,6 @@ bool CWriter::isInlinableInst(Instruction &I) const {
     // Don't inline a load across a store or other bad things!
     return false;
 
-  // Must not be used in inline asm, extractelement, or shufflevector.
-  if (I.hasOneUse()) {
-    Instruction &User = cast<Instruction>(*I.user_back());
-    if (isInlineAsm(User))
-      return false;
-  }
-
   // Only inline instruction if its use is in the same BB as the inst.
   return I.getParent() == cast<Instruction>(I.user_back())->getParent();
 }
@@ -139,14 +132,6 @@ AllocaInst *CWriter::isDirectAlloca(Value *V) const {
   if (AI->getParent() != &AI->getParent()->getParent()->getEntryBlock())
     return nullptr;
   return AI;
-}
-
-// isInlineAsm - Check if the instruction is a call to an inline asm chunk.
-bool CWriter::isInlineAsm(Instruction &I) const {
-  if (CallInst *CI = dyn_cast<CallInst>(&I))
-    return isa<InlineAsm>(CI->getCalledValue());
-  else
-    return false;
 }
 
 bool CWriter::runOnFunction(Function &F) {
@@ -1834,32 +1819,6 @@ void CWriter::generateHeader(Module &M) {
 
   Out << "\n\n/* Global Declarations */\n";
 
-  // First output all the declarations for the program, because C requires
-  // Functions & globals to be declared before they are used.
-  if (!M.getModuleInlineAsm().empty()) {
-    Out << "\n/* Module asm statements */\n"
-        << "__asm__ (";
-
-    // Split the string into lines, to make it easier to read the .ll file.
-    std::string Asm = M.getModuleInlineAsm();
-    size_t CurPos = 0;
-    size_t NewLine = Asm.find_first_of('\n', CurPos);
-    while (NewLine != std::string::npos) {
-      // We found a newline, print the portion of the asm string from the
-      // last newline up to this newline.
-      Out << "\"";
-      PrintEscapedString(
-          std::string(Asm.begin() + CurPos, Asm.begin() + NewLine), Out);
-      Out << "\\n\"\n";
-      CurPos = NewLine + 1;
-      NewLine = Asm.find_first_of('\n', CurPos);
-    }
-    Out << "\"";
-    PrintEscapedString(std::string(Asm.begin() + CurPos, Asm.end()), Out);
-    Out << "\");\n"
-        << "/* End Module asm statements */\n";
-  }
-
   // collect any remaining types
   raw_null_ostream NullOut;
   for (Module::global_iterator I = M.global_begin(), E = M.global_end(); I != E;
@@ -1965,9 +1924,6 @@ void CWriter::generateHeader(Module &M) {
     if (I->hasExternalWeakLinkage())
       Out << "extern ";
     printFunctionProto(Out, &*I);
-    
-    if (I->hasName() && I->getName()[0] == 1)
-      Out << " __asm__ (\"" << I->getName().substr(1) << "\")";
 
     Out << ";\n";
   }
@@ -3060,7 +3016,7 @@ void CWriter::printBasicBlock(BasicBlock *BB) {
       LastAnnotatedSourceLine = Loc->getLine();
     }
     if (!isInlinableInst(*II) && !isDirectAlloca(&*II)) {
-      if (!isEmptyType(II->getType()) && !isInlineAsm(*II))
+      if (!isEmptyType(II->getType()))
         outputLValue(&*II);
 
       else
@@ -3961,9 +3917,6 @@ bool CWriter::lowerIntrinsics(Function &F) {
 void CWriter::visitCallInst(CallInst &I) {
   CurInstr = &I;
 
-  if (isa<InlineAsm>(I.getCalledValue()))
-    return visitInlineAsm(I);
-
   // Handle intrinsic function calls first...
   if (Function *F = I.getCalledFunction()) {
     auto ID = F->getIntrinsicID();
@@ -4256,199 +4209,6 @@ bool CWriter::visitBuiltinCall(CallInst &I, Intrinsic::ID ID) {
   case Intrinsic::trunc:
     return false; // these use the normal function call emission
   }
-}
-
-// This converts the llvm constraint string to something gcc is expecting.
-// TODO: work out platform independent constraints and factor those out
-//      of the per target tables
-//      handle multiple constraint codes
-std::string CWriter::InterpretASMConstraint(InlineAsm::ConstraintInfo &c) {
-  return TargetLowering::AsmOperandInfo(c).ConstraintCode;
-#if 0
-  cwriter_assert(c.Codes.size() == 1 && "Too many asm constraint codes to handle");
-
-  // Grab the translation table from MCAsmInfo if it exists.
-  const MCRegisterInfo *MRI;
-  const MCAsmInfo *TargetAsm;
-  std::string Triple = TheModule->getTargetTriple();
-  if (Triple.empty())
-    Triple = llvm::sys::getDefaultTargetTriple();
-
-  std::string E;
-  if (const Target *Match = TargetRegistry::lookupTarget(Triple, E)) {
-    MRI = Match->createMCRegInfo(Triple);
-    TargetAsm = Match->createMCAsmInfo(*MRI, Triple);
-  } else {
-    return c.Codes[0];
-  }
-
-  const char *const *table = TargetAsm->getAsmCBE();
-
-  // Search the translation table if it exists.
-  for (int i = 0; table && table[i]; i += 2)
-    if (c.Codes[0] == table[i]) {
-      delete TargetAsm;
-      delete MRI;
-      return table[i+1];
-    }
-
-  // Default is identity.
-  delete TargetAsm;
-  delete MRI;
-  return c.Codes[0];
-#endif
-}
-
-// TODO: import logic from AsmPrinter.cpp
-static std::string gccifyAsm(std::string asmstr) {
-  for (std::string::size_type i = 0; i != asmstr.size(); ++i)
-    if (asmstr[i] == '\n')
-      asmstr.replace(i, 1, "\\n");
-    else if (asmstr[i] == '\t')
-      asmstr.replace(i, 1, "\\t");
-    else if (asmstr[i] == '$') {
-      if (asmstr[i + 1] == '{') {
-        std::string::size_type a = asmstr.find_first_of(':', i + 1);
-        std::string::size_type b = asmstr.find_first_of('}', i + 1);
-        std::string n = "%" + asmstr.substr(a + 1, b - a - 1) +
-                        asmstr.substr(i + 2, a - i - 2);
-        asmstr.replace(i, b - i + 1, n);
-        i += n.size() - 1;
-      } else
-        asmstr.replace(i, 1, "%");
-    } else if (asmstr[i] == '%') // grr
-    {
-      asmstr.replace(i, 1, "%%");
-      ++i;
-    }
-
-  return asmstr;
-}
-
-// TODO: assumptions about what consume arguments from the call are likely wrong
-//      handle communitivity
-void CWriter::visitInlineAsm(CallInst &CI) {
-  CurInstr = &CI;
-
-  InlineAsm *as = cast<InlineAsm>(CI.getCalledValue());
-  InlineAsm::ConstraintInfoVector Constraints = as->ParseConstraints();
-
-  std::vector<std::pair<Value *, int>> ResultVals;
-  if (CI.getType() == Type::getVoidTy(CI.getContext()))
-    ;
-  else if (StructType *ST = dyn_cast<StructType>(CI.getType())) {
-    for (unsigned i = 0, e = ST->getNumElements(); i != e; ++i)
-      ResultVals.push_back(std::make_pair(&CI, (int)i));
-  } else {
-    ResultVals.push_back(std::make_pair(&CI, -1));
-  }
-
-  // Fix up the asm string for gcc and emit it.
-  Out << "__asm__ volatile (\"" << gccifyAsm(as->getAsmString()) << "\"\n";
-  Out << "        :";
-
-  unsigned ValueCount = 0;
-  bool IsFirst = true;
-
-  // Convert over all the output constraints.
-  for (InlineAsm::ConstraintInfoVector::iterator I = Constraints.begin(),
-                                                 E = Constraints.end();
-       I != E; ++I) {
-
-    if (I->Type != InlineAsm::isOutput) {
-      ++ValueCount;
-      continue; // Ignore non-output constraints.
-    }
-
-    cwriter_assert(I->Codes.size() == 1 &&
-                   "Too many asm constraint codes to handle");
-    std::string C = InterpretASMConstraint(*I);
-    if (C.empty())
-      continue;
-
-    if (!IsFirst) {
-      Out << ", ";
-      IsFirst = false;
-    }
-
-    // Unpack the dest.
-    Value *DestVal;
-    int DestValNo = -1;
-
-    if (ValueCount < ResultVals.size()) {
-      DestVal = ResultVals[ValueCount].first;
-      DestValNo = ResultVals[ValueCount].second;
-    } else
-      DestVal = CI.getArgOperand(ValueCount - ResultVals.size());
-
-    if (I->isEarlyClobber)
-      C = "&" + C;
-
-    Out << "\"=" << C << "\"(" << GetValueName(DestVal);
-    if (DestValNo != -1)
-      Out << ".field" << DestValNo; // Multiple retvals.
-    Out << ")";
-    ++ValueCount;
-  }
-
-  // Convert over all the input constraints.
-  Out << "\n        :";
-  IsFirst = true;
-  ValueCount = 0;
-  for (InlineAsm::ConstraintInfoVector::iterator I = Constraints.begin(),
-                                                 E = Constraints.end();
-       I != E; ++I) {
-    if (I->Type != InlineAsm::isInput) {
-      ++ValueCount;
-      continue; // Ignore non-input constraints.
-    }
-
-    cwriter_assert(I->Codes.size() == 1 &&
-                   "Too many asm constraint codes to handle");
-    std::string C = InterpretASMConstraint(*I);
-    if (C.empty())
-      continue;
-
-    if (!IsFirst) {
-      Out << ", ";
-      IsFirst = false;
-    }
-
-    cwriter_assert(ValueCount >= ResultVals.size() &&
-                   "Input can't refer to result");
-    Value *SrcVal = CI.getArgOperand(ValueCount - ResultVals.size());
-
-    Out << "\"" << C << "\"(";
-    if (!I->isIndirect)
-      writeOperand(SrcVal);
-    else
-      writeOperandDeref(SrcVal);
-    Out << ")";
-  }
-
-  // Convert over the clobber constraints.
-  IsFirst = true;
-  for (InlineAsm::ConstraintInfoVector::iterator I = Constraints.begin(),
-                                                 E = Constraints.end();
-       I != E; ++I) {
-    if (I->Type != InlineAsm::isClobber)
-      continue; // Ignore non-input constraints.
-
-    cwriter_assert(I->Codes.size() == 1 &&
-                   "Too many asm constraint codes to handle");
-    std::string C = InterpretASMConstraint(*I);
-    if (C.empty())
-      continue;
-
-    if (!IsFirst) {
-      Out << ", ";
-      IsFirst = false;
-    }
-
-    Out << '\"' << C << '"';
-  }
-
-  Out << ")";
 }
 
 void CWriter::printGEPExpression(Value *Ptr, gep_type_iterator I,
