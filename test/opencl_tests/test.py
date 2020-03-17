@@ -20,7 +20,8 @@ if __name__ == "__main__":
             ref = module.run(ctx, src)
             translate(src, O=O)
             res = module.run(ctx, os.path.join(d, "source.cl.cbe.c"))
-            assert np.allclose(ref, res)
+            for f, s in zip(ref, res):
+                assert np.allclose(f, s)
         except Exception as e:
             print("[{}] failed".format(d))
             raise

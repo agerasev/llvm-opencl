@@ -32,6 +32,7 @@
 #include <cstdio>
 
 #include <iostream>
+#include <sstream>
 
 #undef NDEBUG
 
@@ -276,9 +277,26 @@ std::string CWriter::getVectorName(VectorType *VT, bool Aligned) {
   // Vectors are handled like arrays
   cwriter_assert(!isEmptyType(VT));
 
+  uint64_t n = VT->getNumElements();
+  if (n != 2 && n != 3 && n != 4 && n != 8 && n != 16) {
+#ifndef NDEBUG
+    errs() << "Vector of length " << n << " not supported\n";
+#endif
+    errorWithMessage("Unsupported vector length");
+  }
+
   printTypeName(VectorInnards, VT->getElementType(), false);
-  return "struct l_vector_" + utostr(VT->getNumElements()) + '_' +
-         CBEMangle(VectorInnards.str());
+  std::string t = CBEMangle(VectorInnards.str());
+  if (t != "char" && t != "uchar" && t != "short" && t != "ushort" &&
+      t != "int" && t != "uint" && t != "long" && t != "ulong" &&
+      t != "float" && t != "double") {
+#ifndef NDEBUG
+    errs() << "Vector of type " << t << " not supported\n";
+#endif
+    errorWithMessage("Unsupported vector type");
+  }
+  
+  return t + utostr(n);
 }
 
 static const std::string getCmpPredicateName(CmpInst::Predicate P) {
@@ -670,12 +688,7 @@ raw_ostream &CWriter::printArrayDeclaration(raw_ostream &Out, ArrayType *ATy) {
 raw_ostream &CWriter::printVectorDeclaration(raw_ostream &Out,
                                              VectorType *VTy) {
   cwriter_assert(!isEmptyType(VTy));
-  // Vectors are printed like arrays
-  Out << getVectorName(VTy, false) << " {\n  ";
-  printTypeName(Out, VTy->getElementType());
-  Out << " vector[" << utostr(VTy->getNumElements())
-      << "];\n} __attribute__((aligned(" << TD->getABITypeAlignment(VTy)
-      << ")));\n";
+  // Vectors are builtin in OpenCL
   return Out;
 }
 
@@ -772,6 +785,19 @@ bool CWriter::printConstantString(Constant *C, enum OperandContext Context) {
   }
   Out << "\" }";
   return true;
+}
+
+raw_ostream &CWriter::printVectorComponent(raw_ostream &Out, uint64_t i) {
+  static const char comps[17] = "0123456789ABCDEF";
+  if (i < 16) {
+    Out << "s" << comps[i];
+  } else {
+#ifndef NDEBUG
+    errs() << "Vector component index is "  << i << " but it cannot be greater than 15\n";
+#endif
+    errorWithMessage("Vector component error");
+  }
+  return Out;
 }
 
 // isFPCSafeToPrint - Returns true if we may assume that CFP may be written out
@@ -1443,6 +1469,7 @@ std::string CWriter::GetValueName(Value *Operand) {
 /// writeInstComputationInline - Emit the computation for the specified
 /// instruction inline, with no destination provided.
 void CWriter::writeInstComputationInline(Instruction &I) {
+  // TODO: Remove non-power-of-two integer handling
   // C can't handle non-power-of-two integer types
   unsigned mask = 0;
   Type *Ty = I.getType();
@@ -1803,6 +1830,8 @@ bool CWriter::doFinalization(Module &M) {
   return true; // may have lowered an IntrinsicCall
 }
 
+
+
 void CWriter::generateHeader(Module &M) {
   // Keep track of which functions are static ctors/dtors so they can have
   // an attribute added to their prototypes.
@@ -1909,28 +1938,13 @@ void CWriter::generateHeader(Module &M) {
       }
     }
 
-    // Skip a few functions that have already been defined in headers
-    /*
-    if (I->getName() == "setjmp" || I->getName() == "longjmp" ||
-        I->getName() == "_setjmp" || I->getName() == "siglongjmp" ||
-        I->getName() == "sigsetjmp" || I->getName() == "pow" ||
-        I->getName() == "powf" || I->getName() == "sqrt" ||
-        I->getName() == "sqrtf" || I->getName() == "trunc" ||
-        I->getName() == "truncf" || I->getName() == "rint" ||
-        I->getName() == "rintf" || I->getName() == "floor" ||
-        I->getName() == "floorf" || I->getName() == "ceil" ||
-        I->getName() == "ceilf" || I->getName() == "alloca" ||
-        I->getName() == "_alloca" || I->getName() == "_chkstk" ||
-        I->getName() == "__chkstk" || I->getName() == "___chkstk_ms")
-      continue;
-    */
-    
+    // Skip OpenCL built-in functions
     bool builtin = false;
     std::string name;
     ItaniumPartialDemangler dmg;
     if (dmg.partialDemangle(I->getName().data())) {
 #ifndef NDEBUG
-      errs() << "Cannot demangle function '" << I->getName() << "'\n";
+      // errs() << "Cannot demangle function '" << I->getName() << "'\n";
 #endif
     } else {
       size_t size = 0;
@@ -1980,15 +1994,6 @@ void CWriter::generateHeader(Module &M) {
       if (I->hasLocalLinkage())
         continue; // Internal Global
 
-      if (I->hasDLLImportStorageClass())
-        Out << "__declspec(dllimport) ";
-      else if (I->hasDLLExportStorageClass())
-        Out << "__declspec(dllexport) ";
-
-      // Thread Local Storage
-      if (I->isThreadLocal())
-        Out << "__thread ";
-
       Type *ElTy = I->getType()->getElementType();
       unsigned Alignment = I->getAlignment();
       bool IsOveraligned =
@@ -2012,46 +2017,10 @@ void CWriter::generateHeader(Module &M) {
   for (std::set<Type *>::iterator it = SelectDeclTypes.begin(),
                                   end = SelectDeclTypes.end();
        it != end; ++it) {
-    // static Rty llvm_select_u8x4(<bool x 4> condition, <u8 x 4>
-    // iftrue, <u8 x 4> ifnot) {
-    //   Rty r = {
-    //     condition[0] ? iftrue[0] : ifnot[0],
-    //     condition[1] ? iftrue[1] : ifnot[1],
-    //     condition[2] ? iftrue[2] : ifnot[2],
-    //     condition[3] ? iftrue[3] : ifnot[3]
-    //   };
-    //   return r;
-    // }
-    Out << "static ";
-    printTypeNameUnaligned(Out, *it, false);
-    Out << " llvm_select_";
+    // #define llvm_select_u8x4(a, b, c) ((a) ? (b) : (c))
+    Out << "#define llvm_select_";
     printTypeString(Out, *it, false);
-    Out << "(";
-    if (isa<VectorType>(*it))
-      printTypeNameUnaligned(
-          Out,
-          VectorType::get(Type::getInt1Ty((*it)->getContext()),
-                          (*it)->getVectorNumElements()),
-          false);
-    else
-      Out << "bool";
-    Out << " condition, ";
-    printTypeNameUnaligned(Out, *it, false);
-    Out << " iftrue, ";
-    printTypeNameUnaligned(Out, *it, false);
-    Out << " ifnot) {\n  ";
-    printTypeNameUnaligned(Out, *it, false);
-    Out << " r;\n";
-    if (isa<VectorType>(*it)) {
-      unsigned n, l = (*it)->getVectorNumElements();
-      for (n = 0; n < l; n++) {
-        Out << "  r.vector[" << n << "] = condition.vector[" << n
-            << "] ? iftrue.vector[" << n << "] : ifnot.vector[" << n << "];\n";
-      }
-    } else {
-      Out << "  r = condition ? iftrue : ifnot;\n";
-    }
-    Out << "  return r;\n}\n";
+    Out << "(a, b, c) ((a) ? (b) : (c))\n";
   }
 
   // Loop over all compare operations
@@ -2059,79 +2028,53 @@ void CWriter::generateHeader(Module &M) {
            it = CmpDeclTypes.begin(),
            end = CmpDeclTypes.end();
        it != end; ++it) {
-    // static <bool x 4> llvm_icmp_ge_u8x4(<u8 x 4> l, <u8 x 4> r)
-    // {
-    //   Rty c = {
-    //     l[0] >= r[0],
-    //     l[1] >= r[1],
-    //     l[2] >= r[2],
-    //     l[3] >= r[3],
-    //   };
-    //   return c;
-    // }
-    unsigned n, l = (*it).second->getVectorNumElements();
-    VectorType *RTy =
-        VectorType::get(Type::getInt1Ty((*it).second->getContext()), l);
+    // #define llvm_icmp_ge_u8x4(l, r) ((l) >= (r))
     bool isSigned = CmpInst::isSigned((*it).first);
-    Out << "static ";
-    printTypeName(Out, RTy, isSigned);
+    Out << "#define ";
     const auto Pred = (*it).first;
     if (CmpInst::isFPPredicate((*it).first)) {
+      // TODO: What is predicate?
       FCmpOps.insert(Pred);
-      Out << " llvm_fcmp_";
+      Out << "llvm_fcmp_";
     } else
-      Out << " llvm_icmp_";
+      Out << "llvm_icmp_";
     Out << getCmpPredicateName(Pred) << "_";
     printTypeString(Out, (*it).second, isSigned);
-    Out << "(";
-    printTypeNameUnaligned(Out, (*it).second, isSigned);
-    Out << " l, ";
-    printTypeNameUnaligned(Out, (*it).second, isSigned);
-    Out << " r) {\n  ";
-    printTypeName(Out, RTy, isSigned);
-    Out << " c;\n";
-    for (n = 0; n < l; n++) {
-      Out << "  c.vector[" << n << "] = ";
-      if (CmpInst::isFPPredicate((*it).first)) {
-        Out << "llvm_fcmp_ " << getCmpPredicateName((*it).first) << "(l.vector["
-            << n << "], r.vector[" << n << "]);\n";
-      } else {
-        Out << "l.vector[" << n << "]";
-        switch ((*it).first) {
-        case CmpInst::ICMP_EQ:
-          Out << " == ";
-          break;
-        case CmpInst::ICMP_NE:
-          Out << " != ";
-          break;
-        case CmpInst::ICMP_ULE:
-        case CmpInst::ICMP_SLE:
-          Out << " <= ";
-          break;
-        case CmpInst::ICMP_UGE:
-        case CmpInst::ICMP_SGE:
-          Out << " >= ";
-          break;
-        case CmpInst::ICMP_ULT:
-        case CmpInst::ICMP_SLT:
-          Out << " < ";
-          break;
-        case CmpInst::ICMP_UGT:
-        case CmpInst::ICMP_SGT:
-          Out << " > ";
-          break;
-        default:
+    Out << "(l, r) ";
+    Out << "((l) ";
+    switch ((*it).first) {
+    case CmpInst::ICMP_EQ:
+      Out << "==";
+      break;
+    case CmpInst::ICMP_NE:
+      Out << "!=";
+      break;
+    case CmpInst::ICMP_ULE:
+    case CmpInst::ICMP_SLE:
+      Out << "<=";
+      break;
+    case CmpInst::ICMP_UGE:
+    case CmpInst::ICMP_SGE:
+      Out << ">=";
+      break;
+    case CmpInst::ICMP_ULT:
+    case CmpInst::ICMP_SLT:
+      Out << "<";
+      break;
+    case CmpInst::ICMP_UGT:
+    case CmpInst::ICMP_SGT:
+      Out << ">";
+      break;
+    default:
 #ifndef NDEBUG
-          errs() << "Invalid icmp predicate!" << (*it).first << "\n";
+      errs() << "Invalid cmp predicate!" << (*it).first << "\n";
 #endif
-          errorWithMessage("invalid icmp predicate");
-        }
-        Out << "r.vector[" << n << "];\n";
-      }
+      errorWithMessage("invalid cmp predicate");
     }
-    Out << "  return c;\n}\n";
+    Out << " (r))\n";
   }
 
+  // TODO: Test cast
   // Loop over all (vector) cast operations
   for (std::set<
            std::pair<CastInst::CastOps, std::pair<Type *, Type *>>>::iterator
@@ -2203,7 +2146,11 @@ void CWriter::generateHeader(Module &M) {
       unsigned n, l = DstTy->getVectorNumElements();
       cwriter_assert(SrcTy->getVectorNumElements() == l);
       for (n = 0; n < l; n++) {
-        Out << "  out.vector[" << n << "] = in.vector[" << n << "];\n";
+        Out << "  out.";
+        printVectorComponent(Out, n);
+        Out << " = in.";
+        printVectorComponent(Out, n);
+        Out << ";\n";
       }
       Out << "  return out;\n}\n";
     } else {
@@ -2255,385 +2202,163 @@ void CWriter::generateHeader(Module &M) {
            it = InlineOpDeclTypes.begin(),
            end = InlineOpDeclTypes.end();
        it != end; ++it) {
-    // static <u32 x 4> llvm_BinOp_u32x4(<u32 x 4> a, <u32 x 4> b)
-    // {
-    //   Rty r = {
-    //      a[0] OP b[0],
-    //      a[1] OP b[1],
-    //      a[2] OP b[2],
-    //      a[3] OP b[3],
-    //   };
-    //   return r;
-    // }
+    // #define llvm_BinOp_u32x4(a, b) ((a) OP (b))
     unsigned opcode = (*it).first;
     Type *OpTy = (*it).second;
-    Type *ElemTy = isa<VectorType>(OpTy) ? OpTy->getVectorElementType() : OpTy;
-    bool shouldCast;
-    bool isSigned;
-    opcodeNeedsCast(opcode, shouldCast, isSigned);
+    //Type *ElemTy = isa<VectorType>(OpTy) ? OpTy->getVectorElementType() : OpTy;
 
-    Out << "static ";
-    printTypeName(Out, OpTy);
+    Out << "#define ";
     if (opcode == BinaryNeg) {
-      Out << " llvm_neg_";
+      Out << "llvm_neg_";
       printTypeString(Out, OpTy, false);
-      Out << "(";
-      printTypeNameUnaligned(Out, OpTy, isSigned);
-      Out << " a) {\n  ";
+      Out << "(a) ";
     } else if (opcode == BinaryNot) {
-      Out << " llvm_not_";
+      Out << "llvm_not_";
       printTypeString(Out, OpTy, false);
-      Out << "(";
-      printTypeNameUnaligned(Out, OpTy, isSigned);
-      Out << " a) {\n  ";
+      Out << "(a) ";
     } else {
-      Out << " llvm_" << Instruction::getOpcodeName(opcode) << "_";
+      Out << "llvm_" << Instruction::getOpcodeName(opcode) << "_";
       printTypeString(Out, OpTy, false);
-      Out << "(";
-      printTypeNameUnaligned(Out, OpTy, isSigned);
-      Out << " a, ";
-      printTypeNameUnaligned(Out, OpTy, isSigned);
-      Out << " b) {\n  ";
+      Out << "(a, b) ";
     }
 
-    printTypeName(Out, OpTy);
-    // C can't handle non-power-of-two integer types
-    unsigned mask = 0;
-    if (ElemTy->isIntegerTy()) {
-      IntegerType *ITy = static_cast<IntegerType *>(ElemTy);
-      if (!ITy->isPowerOf2ByteWidth())
-        mask = ITy->getBitMask();
-    }
-
-    if (isa<VectorType>(OpTy)) {
-      Out << " r;\n";
-      unsigned n, l = OpTy->getVectorNumElements();
-      for (n = 0; n < l; n++) {
-        Out << "  r.vector[" << n << "] = ";
-        if (mask)
-          Out << "(";
-        if (opcode == BinaryNeg) {
-          Out << "-a.vector[" << n << "]";
-        } else if (opcode == BinaryNot) {
-          Out << "~a.vector[" << n << "]";
-        } else if (opcode == Instruction::FRem) {
-          // Output a call to fmod/fmodf instead of emitting a%b
-          if (ElemTy->isFloatTy())
-            Out << "fmodf(a.vector[" << n << "], b.vector[" << n << "])";
-          else if (ElemTy->isDoubleTy())
-            Out << "fmod(a.vector[" << n << "], b.vector[" << n << "])";
-          else // all 3 flavors of long double
-            Out << "fmodl(a.vector[" << n << "], b.vector[" << n << "])";
-        } else {
-          Out << "a.vector[" << n << "]";
-          switch (opcode) {
-          case Instruction::Add:
-          case Instruction::FAdd:
-            Out << " + ";
-            break;
-          case Instruction::Sub:
-          case Instruction::FSub:
-            Out << " - ";
-            break;
-          case Instruction::Mul:
-          case Instruction::FMul:
-            Out << " * ";
-            break;
-          case Instruction::URem:
-          case Instruction::SRem:
-          case Instruction::FRem:
-            Out << " % ";
-            break;
-          case Instruction::UDiv:
-          case Instruction::SDiv:
-          case Instruction::FDiv:
-            Out << " / ";
-            break;
-          case Instruction::And:
-            Out << " & ";
-            break;
-          case Instruction::Or:
-            Out << " | ";
-            break;
-          case Instruction::Xor:
-            Out << " ^ ";
-            break;
-          case Instruction::Shl:
-            Out << " << ";
-            break;
-          case Instruction::LShr:
-          case Instruction::AShr:
-            Out << " >> ";
-            break;
-          default:
-#ifndef NDEBUG
-            errs() << "Invalid operator type!" << opcode << "\n";
-#endif
-            errorWithMessage("invalid operator type");
-          }
-          Out << "b.vector[" << n << "]";
-        }
-        if (mask)
-          Out << ") & " << mask;
-        Out << ";\n";
-      }
-
-    } else if (OpTy->getPrimitiveSizeInBits() > 64) {
-      Out << " r;\n";
-      Out << "#ifndef __emulate_i128\n";
-      // easy case first: compiler supports i128 natively
-      Out << "  r = ";
-      if (opcode == BinaryNeg) {
-        Out << "-a;\n";
-      } else if (opcode == BinaryNot) {
-        Out << "~a;\n";
-      } else {
-        Out << "a";
-        switch (opcode) {
-        case Instruction::Add:
-          Out << " + ";
-          break;
-        case Instruction::Sub:
-          Out << " - ";
-          break;
-        case Instruction::Mul:
-          Out << " * ";
-          break;
-        case Instruction::URem:
-        case Instruction::SRem:
-          Out << " % ";
-          break;
-        case Instruction::UDiv:
-        case Instruction::SDiv:
-          Out << " / ";
-          break;
-        case Instruction::And:
-          Out << " & ";
-          break;
-        case Instruction::Or:
-          Out << " | ";
-          break;
-        case Instruction::Xor:
-          Out << " ^ ";
-          break;
-        case Instruction::Shl:
-          Out << " << ";
-          break;
-        case Instruction::LShr:
-        case Instruction::AShr:
-          Out << " >> ";
-          break;
-        default:
-#ifndef NDEBUG
-          errs() << "Invalid operator type!" << opcode << "\n";
-#endif
-          errorWithMessage("invalid operator type");
-        }
-        Out << "b;\n";
-      }
-      Out << "#else\n";
-      // emulated twos-complement i128 math
-      if (opcode == BinaryNeg) {
-        Out << "  r.hi = ~a.hi;\n";
-        Out << "  r.lo = ~a.lo + 1;\n";
-        Out << "  if (r.lo == 0) r.hi += 1;\n"; // overflow: carry the one
-      } else if (opcode == BinaryNot) {
-        Out << "  r.hi = ~a.hi;\n";
-        Out << "  r.lo = ~a.lo;\n";
-      } else if (opcode == Instruction::And) {
-        Out << "  r.hi = a.hi & b.hi;\n";
-        Out << "  r.lo = a.lo & b.lo;\n";
-      } else if (opcode == Instruction::Or) {
-        Out << "  r.hi = a.hi | b.hi;\n";
-        Out << "  r.lo = a.lo | b.lo;\n";
-      } else if (opcode == Instruction::Xor) {
-        Out << "  r.hi = a.hi ^ b.hi;\n";
-        Out << "  r.lo = a.lo ^ b.lo;\n";
-      } else if (opcode ==
-                 Instruction::Shl) { // reminder: undef behavior if b >= 128
-        Out << "  if (b.lo >= 64) {\n";
-        Out << "    r.hi = (a.lo << (b.lo - 64));\n";
-        Out << "    r.lo = 0;\n";
-        Out << "  } else if (b.lo == 0) {\n";
-        Out << "    r.hi = a.hi;\n";
-        Out << "    r.lo = a.lo;\n";
-        Out << "  } else {\n";
-        Out << "    r.hi = (a.hi << b.lo) | (a.lo >> (64 - b.lo));\n";
-        Out << "    r.lo = a.lo << b.lo;\n";
-        Out << "  }\n";
-      } else {
-        // everything that hasn't been manually implemented above
-        Out << "  LLVM";
-        switch (opcode) {
-        // case BinaryNeg: Out << "Neg"; break;
-        // case BinaryNot: Out << "FlipAllBits"; break;
-        case Instruction::Add:
-          Out << "Add";
-          break;
-        case Instruction::Sub:
-          Out << "Sub";
-          break;
-        case Instruction::Mul:
-          Out << "Mul";
-          break;
-        case Instruction::URem:
-          Out << "URem";
-          break;
-        case Instruction::SRem:
-          Out << "SRem";
-          break;
-        case Instruction::UDiv:
-          Out << "UDiv";
-          break;
-        case Instruction::SDiv:
-          Out << "SDiv";
-          break;
-        // case Instruction::And:  Out << "And"; break;
-        // case Instruction::Or:   Out << "Or"; break;
-        // case Instruction::Xor:  Out << "Xor"; break;
-        // case Instruction::Shl: Out << "Shl"; break;
-        case Instruction::LShr:
-          Out << "LShr";
-          break;
-        case Instruction::AShr:
-          Out << "AShr";
-          break;
-        default:
-#ifndef NDEBUG
-          errs() << "Invalid operator type!" << opcode << "\n";
-#endif
-          errorWithMessage("invalid operator type");
-        }
-        Out << "(16, &a, &b, &r);\n";
-      }
-      Out << "#endif\n";
-
+    if (opcode == BinaryNeg) {
+      Out << "(-(a))";
+    } else if (opcode == BinaryNot) {
+      Out << "(~(a))";
+    } else if (opcode == Instruction::FRem) {
+      // Output a call to fmod/fmodf instead of emitting a%b
+      // TODO: Add fmod to the list of functions
+      Out << "fmod((a), (b))";
     } else {
-      Out << " r = ";
-      if (mask)
-        Out << "(";
-      if (opcode == BinaryNeg) {
-        Out << "-a";
-      } else if (opcode == BinaryNot) {
-        Out << "~a";
-      } else if (opcode == Instruction::FRem) {
-        // Output a call to fmod/fmodf instead of emitting a%b
-        if (ElemTy->isFloatTy())
-          Out << "fmodf(a, b)";
-        else if (ElemTy->isDoubleTy())
-          Out << "fmod(a, b)";
-        else // all 3 flavors of long double
-          Out << "fmodl(a, b)";
-      } else {
-        Out << "a";
-        switch (opcode) {
-        case Instruction::Add:
-        case Instruction::FAdd:
-          Out << " + ";
-          break;
-        case Instruction::Sub:
-        case Instruction::FSub:
-          Out << " - ";
-          break;
-        case Instruction::Mul:
-        case Instruction::FMul:
-          Out << " * ";
-          break;
-        case Instruction::URem:
-        case Instruction::SRem:
-        case Instruction::FRem:
-          Out << " % ";
-          break;
-        case Instruction::UDiv:
-        case Instruction::SDiv:
-        case Instruction::FDiv:
-          Out << " / ";
-          break;
-        case Instruction::And:
-          Out << " & ";
-          break;
-        case Instruction::Or:
-          Out << " | ";
-          break;
-        case Instruction::Xor:
-          Out << " ^ ";
-          break;
-        case Instruction::Shl:
-          Out << " << ";
-          break;
-        case Instruction::LShr:
-        case Instruction::AShr:
-          Out << " >> ";
-          break;
-        default:
+      Out << "((a) ";
+      switch (opcode) {
+      case Instruction::Add:
+      case Instruction::FAdd:
+        Out << "+";
+        break;
+      case Instruction::Sub:
+      case Instruction::FSub:
+        Out << "-";
+        break;
+      case Instruction::Mul:
+      case Instruction::FMul:
+        Out << "*";
+        break;
+      case Instruction::URem:
+      case Instruction::SRem:
+      case Instruction::FRem:
+        Out << "%";
+        break;
+      case Instruction::UDiv:
+      case Instruction::SDiv:
+      case Instruction::FDiv:
+        Out << "/";
+        break;
+      case Instruction::And:
+        Out << "&";
+        break;
+      case Instruction::Or:
+        Out << "|";
+        break;
+      case Instruction::Xor:
+        Out << "^";
+        break;
+      case Instruction::Shl:
+        Out << "<<";
+        break;
+      case Instruction::LShr:
+      case Instruction::AShr:
+        Out << ">>";
+        break;
+      default:
 #ifndef NDEBUG
-          errs() << "Invalid operator type!" << opcode << "\n";
+        errs() << "Invalid operator type!" << opcode << "\n";
 #endif
-          errorWithMessage("invalid operator type");
-        }
-        Out << "b";
-        if (mask)
-          Out << ") & " << mask;
+        errorWithMessage("invalid operator type");
       }
-      Out << ";\n";
+      Out << " (b))";
     }
-    Out << "  return r;\n}\n";
+    Out << "\n";
   }
-
+  
   // Loop over all inline constructors
   for (std::set<Type *>::iterator it = CtorDeclTypes.begin(),
                                   end = CtorDeclTypes.end();
        it != end; ++it) {
-    // static <u32 x 4> llvm_ctor_u32x4(u32 x1, u32 x2, u32 x3,
-    // u32 x4) {
-    //   Rty r = {
-    //     x1, x2, x3, x4
-    //   };
-    //   return r;
-    // }
-    Out << "static ";
-    printTypeName(Out, *it);
-    Out << " llvm_ctor_";
-    printTypeString(Out, *it, false);
-    Out << "(";
-    StructType *STy = dyn_cast<StructType>(*it);
-    ArrayType *ATy = dyn_cast<ArrayType>(*it);
+
     VectorType *VTy = dyn_cast<VectorType>(*it);
-    unsigned e = (STy ? STy->getNumElements()
-                      : (ATy ? ATy->getNumElements() : VTy->getNumElements()));
-    bool printed = false;
-    for (unsigned i = 0; i != e; ++i) {
-      Type *ElTy =
-          STy ? STy->getElementType(i) : (*it)->getSequentialElementType();
-      if (isEmptyType(ElTy))
-        Out << " /* ";
-      else if (printed)
-        Out << ", ";
-      printTypeNameUnaligned(Out, ElTy);
-      Out << " x" << i;
-      if (isEmptyType(ElTy))
-        Out << " */";
-      else
-        printed = true;
+    if (VTy) {
+      //#define llvm_ctor_u32x4(x1, x2, x3, x4) (Rty)((x1), (x2), (x3), (x4)))
+      unsigned e = VTy->getNumElements();
+      Out << "#define ";
+      Out << "llvm_ctor_";
+      printTypeString(Out, *it, false);
+      Out << "(";
+      for (unsigned i = 0; i != e; ++i) {
+        Out << "x" << i;
+        if (i < e - 1) {
+          Out << ", ";
+        }
+      }
+      Out << ") ((";
+      printTypeName(Out, *it);
+      Out << ")(";
+      for (unsigned i = 0; i != e; ++i) {
+        Out << "x" << i;
+        if (i < e - 1) {
+          Out << ", ";
+        }
+      }
+      Out << "))\n";
+    } else {
+      // static <u32 x 4> llvm_ctor_u32x4(u32 x1, u32 x2, u32 x3,
+      // u32 x4) {
+      //   Rty r = {
+      //     x1, x2, x3, x4
+      //   };
+      //   return r;
+      // }
+      Out << "static ";
+      printTypeName(Out, *it);
+      Out << " llvm_ctor_";
+      printTypeString(Out, *it, false);
+      Out << "(";
+      StructType *STy = dyn_cast<StructType>(*it);
+      ArrayType *ATy = dyn_cast<ArrayType>(*it);
+      unsigned e = (STy ? STy->getNumElements() : ATy->getNumElements());
+      bool printed = false;
+      for (unsigned i = 0; i != e; ++i) {
+        Type *ElTy =
+            STy ? STy->getElementType(i) : (*it)->getSequentialElementType();
+        if (isEmptyType(ElTy))
+          Out << " /* ";
+        else if (printed)
+          Out << ", ";
+        printTypeNameUnaligned(Out, ElTy);
+        Out << " x" << i;
+        if (isEmptyType(ElTy))
+          Out << " */";
+        else
+          printed = true;
+      }
+      Out << ") {\n  ";
+      printTypeName(Out, *it);
+      Out << " r;";
+      for (unsigned i = 0; i != e; ++i) {
+        Type *ElTy =
+            STy ? STy->getElementType(i) : (*it)->getSequentialElementType();
+        if (isEmptyType(ElTy))
+          continue;
+        if (STy)
+          Out << "\n  r.field" << i << " = x" << i << ";";
+        else if (ATy)
+          Out << "\n  r.array[" << i << "] = x" << i << ";";
+        else
+          cwriter_assert(0);
+      }
+      Out << "\n  return r;\n}\n";
     }
-    Out << ") {\n  ";
-    printTypeName(Out, *it);
-    Out << " r;";
-    for (unsigned i = 0; i != e; ++i) {
-      Type *ElTy =
-          STy ? STy->getElementType(i) : (*it)->getSequentialElementType();
-      if (isEmptyType(ElTy))
-        continue;
-      if (STy)
-        Out << "\n  r.field" << i << " = x" << i << ";";
-      else if (ATy)
-        Out << "\n  r.array[" << i << "] = x" << i << ";";
-      else if (VTy)
-        Out << "\n  r.vector[" << i << "] = x" << i << ";";
-      else
-        cwriter_assert(0);
-    }
-    Out << "\n  return r;\n}\n";
   }
 
   // Emit definitions of the intrinsics.
@@ -3678,11 +3403,14 @@ void CWriter::printIntrinsicDefinition(FunctionType *funT, unsigned Opcode,
 
   if (isa<VectorType>(retT)) {
     for (i = 0; i < numParams; i++) {
-      Out << "  r.vector[" << (int)i << "] = " << OpName << "_devec(";
+      Out << "  r.";
+      printVectorComponent(Out, (int)i);
+      Out << OpName << "_devec(";
       for (char j = 0; j < numParams; j++) {
         Out << (char)('a' + j);
         if (isa<VectorType>(funT->params()[j]))
-          Out << ".vector[" << (int)i << "]";
+          Out << ".";
+          printVectorComponent(Out, (int)i);
         if (j != numParams - 1)
           Out << ", ";
       }
@@ -4445,6 +4173,21 @@ void CWriter::visitVAArgInst(VAArgInst &I) {
   Out << ");\n ";
 }
 
+// TODO: Move to header. In general we need to split this enormous file.
+class OutModifier {
+public:
+  size_t last_size;
+  std::string &out;
+  OutModifier(std::string &out) : out(out) {
+    last_size = out.size();
+  }
+  std::string cut_tail() {
+    std::string tail = out.substr(last_size, out.size() - last_size);
+    out.resize(last_size);
+    return tail;
+  }
+};
+
 void CWriter::visitInsertElementInst(InsertElementInst &I) {
   CurInstr = &I;
 
@@ -4457,9 +4200,22 @@ void CWriter::visitInsertElementInst(InsertElementInst &I) {
 
   // Then do the insert to update the field.
   Out << ";\n  ";
-  Out << GetValueName(&I) << ".vector[";
+  Out << GetValueName(&I) << ".";
+  int index;
+  OutModifier mod(Out.str());
   writeOperand(I.getOperand(2));
-  Out << "] = ";
+  Out.str();
+  std::string index_str = mod.cut_tail();
+  std::stringstream ss(index_str);
+  ss >> index;
+  if (!ss.good()) {
+#ifndef NDEBUG
+      errs() << "Cannot parse '" << index_str << "' as integer\n";
+#endif
+    errorWithMessage("Cannot access vector element by dynamic index");
+  }
+  printVectorComponent(Out, index);
+  Out << " = ";
   writeOperand(I.getOperand(1), ContextCasted);
 }
 
@@ -4474,9 +4230,21 @@ void CWriter::visitExtractElementInst(ExtractElementInst &I) {
   } else {
     Out << "(";
     writeOperand(I.getOperand(0));
-    Out << ").vector[";
+    Out << ").";
+    int index;
+    OutModifier mod(Out.str());
     writeOperand(I.getOperand(1));
-    Out << "]";
+    Out.str();
+    std::string index_str = mod.cut_tail();
+    std::stringstream ss(index_str);
+    ss >> index;
+    if (!ss.good()) {
+  #ifndef NDEBUG
+        errs() << "Cannot parse '" << index_str << "' as integer\n";
+  #endif
+      errorWithMessage("Cannot access vector element by dynamic index");
+    }
+    printVectorComponent(Out, index);
   }
 }
 
@@ -4516,10 +4284,10 @@ void CWriter::visitShuffleVectorInst(ShuffleVectorInst &SVI) {
         // Do an extractelement of this value from the appropriate input.
         Out << "(";
         writeOperand(Op);
-        Out << ").vector[";
-        Out << ((unsigned)SrcVal >= NumInputElts ? SrcVal - NumInputElts
-                                                 : SrcVal);
-        Out << "]";
+        Out << ").";
+        printVectorComponent(Out,
+          ((unsigned)SrcVal >= NumInputElts ? SrcVal - NumInputElts : SrcVal)
+        );
       } else if (isa<ConstantAggregateZero>(Op) || isa<UndefValue>(Op)) {
         printConstant(Zero, ContextCasted);
       } else {

@@ -175,6 +175,8 @@ private:
   std::string getArrayName(ArrayType *AT);
   std::string getVectorName(VectorType *VT, bool Aligned);
 
+  raw_ostream &printVectorComponent(raw_ostream &Out, uint64_t i);
+
   enum OperandContext {
     ContextNormal,
     ContextCasted,
