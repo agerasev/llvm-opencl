@@ -133,7 +133,10 @@ namespace llvm {
     "vload4(unsigned int, float const AS1*)",
     "vstore2(float vector[2], unsigned int, loat AS1*)",
     "vstore3(float vector[3], unsigned int, float AS1*)",
-    "vstore4(float vector[4], unsigned int, float AS1*)"
+    "vstore4(float vector[4], unsigned int, float AS1*)",
+    "length(float vector[2])",
+    "length(float vector[3])",
+    "length(float vector[4])"
   )) {}
 
   bool CLBuiltIns::isBuiltIn(const char *full_name) const {

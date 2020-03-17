@@ -12,6 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+
 #include "CBackend.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/CodeGen/TargetLowering.h"
@@ -795,6 +796,29 @@ raw_ostream &CWriter::printVectorComponent(raw_ostream &Out, uint64_t i) {
     errs() << "Vector component index is "  << i << " but it cannot be greater than 15\n";
 #endif
     errorWithMessage("Vector component error");
+  }
+  return Out;
+}
+
+raw_ostream &CWriter::printVectorShuffled(raw_ostream &Out, const std::vector<uint64_t> &mask) {
+  static const char comps[17] = "0123456789ABCDEF";
+  size_t s = mask.size();
+  if (s != 2 && s != 3 && s != 4 && s != 8 && s != 16) {
+#ifndef NDEBUG
+    errs() << "Shuffled vector size is "  << s << " but it can only be 2, 3, 4, 8 or 16\n";
+#endif
+    errorWithMessage("Shuffled vector size error");
+  }
+  Out << "s";
+  for (uint64_t i : mask) {
+    if (i < 16) {
+      Out << comps[i];
+    } else {
+  #ifndef NDEBUG
+      errs() << "Vector component index is "  << i << " but it cannot be greater than 15\n";
+  #endif
+      errorWithMessage("Vector component error");
+    }
   }
   return Out;
 }
@@ -2225,7 +2249,6 @@ void CWriter::generateHeader(Module &M) {
       Out << "(~(a))";
     } else if (opcode == Instruction::FRem) {
       // Output a call to fmod/fmodf instead of emitting a%b
-      // TODO: Add fmod to the list of functions
       Out << "fmod((a), (b))";
     } else {
       Out << "((a) ";
@@ -3991,7 +4014,7 @@ void CWriter::printGEPExpression(Value *Ptr, gep_type_iterator I,
   // TODO: this is no longer true now that we don't represent vectors using
   // gcc-extentions
   if (LastIndexIsVector) {
-    Out << "((";
+    //Out << "((";
     printTypeName(Out,
                   PointerType::getUnqual(LastIndexIsVector->getElementType()));
     Out << ")(";
@@ -4166,7 +4189,7 @@ void CWriter::visitVAArgInst(VAArgInst &I) {
   Out << ");\n ";
 }
 
-// TODO: Move to header. In general we need to split this enormous file.
+// TODO_: Move to header. In general we need to split this enormous file.
 class OutModifier {
 public:
   size_t last_size;
@@ -4241,6 +4264,7 @@ void CWriter::visitExtractElementInst(ExtractElementInst &I) {
   }
 }
 
+// TODO_: Shuffle vector using something like `.xyxw`
 // <result> = shufflevector <n x <ty>> <v1>, <n x <ty>> <v2>, <m x i32> <mask>
 // ; yields <m x <ty>>
 void CWriter::visitShuffleVectorInst(ShuffleVectorInst &SVI) {

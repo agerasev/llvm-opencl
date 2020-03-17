@@ -176,6 +176,7 @@ private:
   std::string getVectorName(VectorType *VT, bool Aligned);
 
   raw_ostream &printVectorComponent(raw_ostream &Out, uint64_t i);
+  raw_ostream &printVectorShuffled(raw_ostream &Out, const std::vector<uint64_t> &mask);
 
   enum OperandContext {
     ContextNormal,

@@ -8,9 +8,7 @@ import pyopencl as cl
 from translate import translate
 
 if __name__ == "__main__":
-    argc = len(sys.argv)
-    O = sys.argv[1] if argc >= 2 else 3
-
+    O = os.environ.get("OPT", 3)
     ctx = cl.create_some_context()
 
     for d in sorted([f for f in os.listdir(".") if os.path.isdir(f) and f.startswith("test_")]):
