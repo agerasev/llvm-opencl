@@ -211,14 +211,6 @@ raw_ostream &CWriter::printTypeString(raw_ostream &Out, Type *Ty,
     return Out << "f32";
   case Type::DoubleTyID:
     return Out << "f64";
-  case Type::X86_FP80TyID:
-    return Out << "f80";
-  case Type::PPC_FP128TyID:
-  case Type::FP128TyID:
-    return Out << "f128";
-
-  case Type::X86_MMXTyID:
-    return Out << (isSigned ? "i32y2" : "u32y2");
 
   case Type::VectorTyID: {
     TypedefDeclTypes.insert(Ty);
@@ -545,8 +537,6 @@ raw_ostream &CWriter::printTypeNameUnaligned(raw_ostream &Out, Type *Ty,
 
 raw_ostream &CWriter::printStructDeclaration(raw_ostream &Out,
                                              StructType *STy) {
-  if (STy->isPacked())
-    Out << "#ifdef _MSC_VER\n#pragma pack(push, 1)\n#endif\n";
   Out << getStructName(STy) << " {\n";
   unsigned Idx = 0;
   for (StructType::element_iterator I = STy->element_begin(),
@@ -566,8 +556,6 @@ raw_ostream &CWriter::printStructDeclaration(raw_ostream &Out,
   if (STy->isPacked())
     Out << " __attribute__ ((packed))";
   Out << ";\n";
-  if (STy->isPacked())
-    Out << "#ifdef _MSC_VER\n#pragma pack(pop)\n#endif\n";
   return Out;
 }
 
@@ -608,15 +596,6 @@ CWriter::printFunctionProto(raw_ostream &Out, FunctionType *FTy,
     break;
   case CallingConv::SPIR_KERNEL:
     Out << " __kernel";
-    break;
-  case CallingConv::X86_StdCall:
-    Out << " __stdcall";
-    break;
-  case CallingConv::X86_FastCall:
-    Out << " __fastcall";
-    break;
-  case CallingConv::X86_ThisCall:
-    Out << " __thiscall";
     break;
   default:
 #ifndef NDEBUG
@@ -1188,10 +1167,7 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
 
   switch (CPV->getType()->getTypeID()) {
   case Type::FloatTyID:
-  case Type::DoubleTyID:
-  case Type::X86_FP80TyID:
-  case Type::PPC_FP128TyID:
-  case Type::FP128TyID: {
+  case Type::DoubleTyID: {
     ConstantFP *FPC = cast<ConstantFP>(CPV);
     auto I = FPConstantMap.find(FPC);
     if (I != FPConstantMap.end()) {
@@ -3537,10 +3513,6 @@ void CWriter::printIntrinsicDefinition(FunctionType *funT, unsigned Opcode,
       suffix = "f";
     } else if (elemT->isDoubleTy()) {
       suffix = "";
-    } else if (elemT->isFP128Ty()) {
-    } else if (elemT->isX86_FP80Ty()) {
-    } else if (elemT->isPPC_FP128Ty()) {
-      suffix = "l";
     } else {
 #ifndef NDEBUG
       errs() << "Unsupported Intrinsic!" << Opcode << "\n";
@@ -3625,11 +3597,6 @@ bool CWriter::lowerIntrinsics(Function &F) {
           case Intrinsic::sigsetjmp:
           case Intrinsic::siglongjmp:
           case Intrinsic::prefetch:
-          case Intrinsic::x86_sse_cmp_ss:
-          case Intrinsic::x86_sse_cmp_ps:
-          case Intrinsic::x86_sse2_cmp_sd:
-          case Intrinsic::x86_sse2_cmp_pd:
-          case Intrinsic::ppc_altivec_lvsl:
           case Intrinsic::uadd_with_overflow:
           case Intrinsic::sadd_with_overflow:
           case Intrinsic::usub_with_overflow:
@@ -3898,65 +3865,6 @@ bool CWriter::visitBuiltinCall(CallInst &I, Intrinsic::ID ID) {
     Out << ")";
     return true;
   case Intrinsic::stacksave:
-    return true;
-  case Intrinsic::x86_sse_cmp_ss:
-  case Intrinsic::x86_sse_cmp_ps:
-  case Intrinsic::x86_sse2_cmp_sd:
-  case Intrinsic::x86_sse2_cmp_pd:
-    Out << '(';
-    printTypeName(Out, I.getType());
-    Out << ')';
-    // Multiple GCC builtins multiplex onto this intrinsic.
-    switch (cast<ConstantInt>(I.getArgOperand(2))->getZExtValue()) {
-    default:
-      errorWithMessage("Invalid llvm.x86.sse.cmp!");
-    case 0:
-      Out << "__builtin_ia32_cmpeq";
-      break;
-    case 1:
-      Out << "__builtin_ia32_cmplt";
-      break;
-    case 2:
-      Out << "__builtin_ia32_cmple";
-      break;
-    case 3:
-      Out << "__builtin_ia32_cmpunord";
-      break;
-    case 4:
-      Out << "__builtin_ia32_cmpneq";
-      break;
-    case 5:
-      Out << "__builtin_ia32_cmpnlt";
-      break;
-    case 6:
-      Out << "__builtin_ia32_cmpnle";
-      break;
-    case 7:
-      Out << "__builtin_ia32_cmpord";
-      break;
-    }
-    if (ID == Intrinsic::x86_sse_cmp_ps || ID == Intrinsic::x86_sse2_cmp_pd)
-      Out << 'p';
-    else
-      Out << 's';
-    if (ID == Intrinsic::x86_sse_cmp_ss || ID == Intrinsic::x86_sse_cmp_ps)
-      Out << 's';
-    else
-      Out << 'd';
-
-    Out << "(";
-    writeOperand(I.getArgOperand(0), ContextCasted);
-    Out << ", ";
-    writeOperand(I.getArgOperand(1), ContextCasted);
-    Out << ")";
-    return true;
-  case Intrinsic::ppc_altivec_lvsl:
-    Out << '(';
-    printTypeName(Out, I.getType());
-    Out << ')';
-    Out << "__builtin_altivec_lvsl(0, (void*)";
-    writeOperand(I.getArgOperand(0), ContextCasted);
-    Out << ")";
     return true;
   case Intrinsic::stackprotector:
     writeOperandDeref(I.getArgOperand(1));
