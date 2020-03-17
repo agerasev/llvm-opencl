@@ -26,7 +26,6 @@
 #include "llvm/Demangle/Demangle.h"
 
 #include "TopologicalSorter.h"
-#include "CBuiltIns.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -1469,7 +1468,6 @@ std::string CWriter::GetValueName(Value *Operand) {
 /// writeInstComputationInline - Emit the computation for the specified
 /// instruction inline, with no destination provided.
 void CWriter::writeInstComputationInline(Instruction &I) {
-  // TODO: Remove non-power-of-two integer handling
   // C can't handle non-power-of-two integer types
   unsigned mask = 0;
   Type *Ty = I.getType();
@@ -2033,7 +2031,6 @@ void CWriter::generateHeader(Module &M) {
     Out << "#define ";
     const auto Pred = (*it).first;
     if (CmpInst::isFPPredicate((*it).first)) {
-      // TODO: What is predicate?
       FCmpOps.insert(Pred);
       Out << "llvm_fcmp_";
     } else
@@ -2736,8 +2733,6 @@ void CWriter::printFunction(Function &F) {
 }
 
 void CWriter::printLoop(Loop *L) {
-  Out << "  do {     /* Syntactic loop '" << L->getHeader()->getName()
-      << "' to make GCC happy */\n";
   for (unsigned i = 0, e = L->getBlocks().size(); i != e; ++i) {
     BasicBlock *BB = L->getBlocks()[i];
     Loop *BBLoop = LI->getLoopFor(BB);
@@ -2746,8 +2741,6 @@ void CWriter::printLoop(Loop *L) {
     else if (BB == BBLoop->getHeader() && BBLoop->getParentLoop() == L)
       printLoop(BBLoop);
   }
-  Out << "  } while (1); /* end of syntactic loop '"
-      << L->getHeader()->getName() << "' */\n";
 }
 
 void CWriter::printBasicBlock(BasicBlock *BB) {
