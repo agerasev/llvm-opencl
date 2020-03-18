@@ -1,10 +1,14 @@
 #include "CLBuiltIns.h"
 
 #include <algorithm>
-#include <unordered_set>
+#include <vector>
+
+#include "llvm/Demangle/Demangle.h"
 
 
-namespace llvm {
+namespace llvm_cbe {
+  using namespace llvm;
+
   bool Matcher::match(const std::string &str) {
     auto postfixes = match_prefix(str);
     return postfixes.find(MatchInfo("")) != postfixes.end();
@@ -27,6 +31,20 @@ namespace llvm {
       str.replace(pos, from.size(), to);
       pos += to.size();
     }
+  }
+
+  static std::vector<std::string> split(const std::string &str, const std::string &sep) {
+    std::vector<std::string> out;
+    size_t pos = 0;
+    while (pos < str.size()) {
+      size_t new_pos = str.find(sep, pos);
+      if (new_pos == std::string::npos) {
+        new_pos = str.size();
+      }
+      out.push_back(str.substr(pos, new_pos - pos));
+      pos = new_pos + sep.size();
+    }
+    return out;
   }
 
   MatchInfo::MatchInfo(const std::string &tail) : tail(tail) {}
@@ -169,6 +187,82 @@ namespace llvm {
     }
   };
 
+  int CLBuiltIns::checkBuiltIn(const char *mangled_name, std::string *demangled) const {
+    std::string name;
+
+    ItaniumPartialDemangler dmg;
+    if (dmg.partialDemangle(mangled_name)) {
+#ifndef NDEBUG
+      // errs() << "Cannot demangle function '" << I->getName() << "'\n";
+#endif
+    } else {
+      size_t size = 0;
+      char *buf = dmg.finishDemangle(nullptr, &size);
+      if (buf == nullptr) {
+        return -1;
+      }
+      name = std::string(buf);
+      std::free(buf);
+    }
+
+    replace(name, "unsigned ", "u");
+    replace(name, " vector[", "");
+    replace(name, "]", "");
+
+    int res = matcher->match(name);
+
+    replace(name, "AS0", "__private ");
+    replace(name, "AS1", "__global ");
+    replace(name, "AS2", "__constant ");
+    replace(name, "AS3", "__local ");
+
+    if (demangled) {
+      *demangled = name;
+    }
+
+    return res;
+  }
+
+  std::string CLBuiltIns::getBuiltInDef(
+    const std::string &demangled,
+    Function *F, std::function<std::string(Value *)> GetName
+  ) const {
+    std::string _out;
+    raw_string_ostream out(_out);
+
+    auto sp = split(demangled, "(");
+    std::string name = sp[0], stypes = sp[1];
+    replace(stypes, ")", "");
+    std::vector<std::string> types = split(stypes, ", ");
+
+    out << "return ";
+    // FIXME: Also cast return type
+    /*
+    if (dyn_cast<VectorType>(F->getReturnType())) {
+      
+    } else {
+
+    }
+    */
+    out << name << "(";
+    int i = 0;
+    for (auto &a : F->args()) {
+      if (i > 0) {
+        out << ", ";
+      }
+      if (dyn_cast<VectorType>(a.getType())) {
+        out << "convert_" << types[i];
+      } else {
+        out << "(" << types[i] << ")";
+      }
+      out << "(" << GetName(&a) << ")";
+      i += 1;
+    }
+    out << ")";
+
+    return out.str();
+  }
+
   template <typename ... Args>
   static MatcherPtr option(Args &&...matchers) {
     return make_unique<OptionMatcher>(std::forward<Args>(matchers)...);
@@ -289,13 +383,5 @@ namespace llvm {
       product("vstore", dim(), "(", gentype(), ", uint, ", type(), " ", addrspace(), "*)"),
       product("length(float", dim(), ")")
     );
-  }
-
-  bool CLBuiltIns::isBuiltIn(const char *full_name) const {
-    std::string name(full_name);
-    replace(name, "unsigned ", "u");
-    replace(name, " vector[", "");
-    replace(name, "]", "");
-    return matcher->match(name);
   }
 } // namespace llvm

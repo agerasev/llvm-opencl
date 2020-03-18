@@ -1,16 +1,22 @@
 #ifndef CLBUILTINS_H
 #define CLBUILTINS_H
 
-#include <llvm/ADT/STLExtras.h>
-
 #include <string>
 #include <memory>
 #include <list>
 #include <set>
 #include <map>
+#include <functional>
+
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Value.h"
 
 
-namespace llvm {
+namespace llvm_cbe {
+  using namespace llvm;
+
   class Matcher;
   
   typedef std::unique_ptr<Matcher> MatcherPtr;
@@ -41,13 +47,16 @@ namespace llvm {
     bool match(const std::string &str);
   };
 
-
   class CLBuiltIns {
   private:
     MatcherPtr matcher;
   public:
     CLBuiltIns();
-    bool isBuiltIn(const char *func_name_and_sig) const;
+    int checkBuiltIn(const char *mangled_name, std::string *demangled) const;
+    std::string getBuiltInDef(
+      const std::string &demangled,
+      Function *F, std::function<std::string(Value *)> GetName
+    ) const;
   };
 } // namespace llvm
 

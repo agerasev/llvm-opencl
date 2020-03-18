@@ -3,8 +3,7 @@
 from subprocess import run
 
 
-def gen_spir(src, O=3):
-    ll = "{}.ll".format(src)
+def gen_spir(src, ll, O=3):
     run([
         "clang-8", "-x", "cl", "-S", "-emit-llvm",
         "--target=spir-unknown-unknown",
@@ -13,11 +12,12 @@ def gen_spir(src, O=3):
         "-O{}".format(O),
         src, "-o", ll,
     ], check=True)
-    return ll
 
-def gen_ocls(ll):
-    run(["llvm-cbe", ll], check=True)
+def gen_ocls(ll, cbe_cl):
+    run(["llvm-cbe", ll, "-o", cbe_cl], check=True)
 
 def translate(src, **opts):
-    ll = gen_spir(src, **opts)
-    gen_ocls(ll)
+    ll = "{}.ll".format(src)
+    cbe_cl = "{}.cbe.cl".format(src)
+    gen_spir(src, ll, **opts)
+    gen_ocls(ll, cbe_cl)

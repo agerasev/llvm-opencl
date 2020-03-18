@@ -24,7 +24,6 @@
 #include "llvm/Support/Host.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/TargetRegistry.h"
-#include "llvm/Demangle/Demangle.h"
 
 #include "TopologicalSorter.h"
 
@@ -1439,12 +1438,19 @@ std::string CWriter::GetValueName(Value *Operand) {
   std::string Name = Operand->getName();
   if (Name.empty()) { // Assign unique names to local temporaries.
     unsigned No = AnonValueNumbers.getOrInsert(Operand);
-    Name = "tmp__" + utostr(No);
+    Name = "tmp_" + utostr(No);
   }
 
   // Mangle globals with the standard mangler interface for LLC compatibility.
   if (isa<GlobalValue>(Operand)) {
-    return CBEMangle(Name);
+    switch (builtins.checkBuiltIn(Name.data(), nullptr)) {
+    case -1:
+      errorWithMessage("Built-in check unexpected error");
+    case 0:
+      return CBEMangle(Name);
+    case 1:
+      return "_builtin_wrap" + CBEMangle(Name);
+    }
   }
 
   std::string VarName;
@@ -1937,32 +1943,26 @@ void CWriter::generateHeader(Module &M) {
     }
 
     // Skip OpenCL built-in functions
-    bool builtin = false;
-    std::string name;
-    ItaniumPartialDemangler dmg;
-    if (dmg.partialDemangle(I->getName().data())) {
-#ifndef NDEBUG
-      // errs() << "Cannot demangle function '" << I->getName() << "'\n";
-#endif
-    } else {
-      size_t size = 0;
-      char *buf = dmg.getFunctionName(nullptr, &size);
-      if (buf == nullptr) {
-        errorWithMessage("Demangle error");
-      }
-      name = std::string(buf);
-      buf = dmg.finishDemangle(buf, &size);
-      if (buf == nullptr) {
-        errorWithMessage("Demangle error");
-      }
-      Out << "// " << buf << "\n";
-      builtin = builtins.isBuiltIn(buf);
-      std::free(buf);
+    std::string demangled;
+    switch (builtins.checkBuiltIn(I->getName().data(), &demangled)) {
+    case -1:
+      errorWithMessage("Built-in check unexpected error");
+      break;
+    case 1: {
+      // Is opencl built-in
+      Out << "// " << demangled << "\n";
+      Out << "static ";
+      iterator_range<Function::arg_iterator> args = I->args();
+      printFunctionProto(Out, I->getFunctionType(),
+                        std::make_pair(I->getAttributes(), I->getCallingConv()),
+                        GetValueName(&*I), &args);
+      Out << " {\n  " << builtins.getBuiltInDef(
+        demangled, &*I, [this](Value *Operand) { return this->GetValueName(Operand); }
+      ) << ";\n}\n";
+      break;
     }
-
-    if (builtin) {
-      Out << "#define " << I->getName() << " " << name << "\n";
-    } else {
+    case 0:
+      // Is not opencl built-in
       if (I->hasLocalLinkage())
         Out << "static ";
       if (I->hasExternalWeakLinkage())
@@ -1970,7 +1970,6 @@ void CWriter::generateHeader(Module &M) {
       printFunctionProto(Out, &*I);
       Out << ";\n";
     }
-
   }
 
   // Output the global variable definitions and contents...
@@ -2648,10 +2647,6 @@ void CWriter::printFunction(Function &F) {
   bool isStructReturn = F.hasStructRetAttr();
 
   cwriter_assert(!F.isDeclaration());
-  if (F.hasDLLImportStorageClass())
-    Out << "__declspec(dllimport) ";
-  if (F.hasDLLExportStorageClass())
-    Out << "__declspec(dllexport) ";
   if (F.hasLocalLinkage())
     Out << "static ";
 
@@ -3922,7 +3917,7 @@ void CWriter::printGEPExpression(Value *Ptr, gep_type_iterator I,
   // TODO: this is no longer true now that we don't represent vectors using
   // gcc-extentions
   if (LastIndexIsVector) {
-    //Out << "((";
+    Out << "((";
     printTypeName(Out,
                   PointerType::getUnqual(LastIndexIsVector->getElementType()));
     Out << ")(";
@@ -3982,15 +3977,19 @@ void CWriter::printGEPExpression(Value *Ptr, gep_type_iterator I,
       // works with the 'LastIndexIsVector' code above.
       if (isa<Constant>(I.getOperand()) &&
           cast<Constant>(I.getOperand())->isNullValue()) {
-        Out << "))"; // avoid "+0".
+        //Out << "))"; // avoid "+0".
       } else {
         Out << ")+(";
         writeOperandWithCast(I.getOperand(), Instruction::GetElementPtr);
-        Out << "))";
+        //Out << "))";
       }
     }
 
     IntoT = I.getIndexedType();
+  }
+
+  if (LastIndexIsVector) {
+    Out << "))";
   }
   Out << ")";
 }
