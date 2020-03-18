@@ -18,12 +18,25 @@ namespace llvm {
     }
   }
 
+  static void replace(std::string &str, const std::string &old, const std::string &new_) {
+    size_t pos = 0;
+    for (;;) {
+      pos = str.find(old, pos);
+      if (pos == std::string::npos) {
+        break;
+      }
+      str.replace(pos, old.size(), new_);
+      pos += old.size();
+    }
+  }
+
   class ConstMatcher : public Matcher {
   private:
     std::string value;
   public:
     ConstMatcher(const char *value) : value(value) {}
     ConstMatcher(std::string &&value) : value(std::move(value)) {}
+
     std::set<std::string> match_prefix(const std::string &str) const override {
       auto res = std::mismatch(value.begin(), value.end(), str.begin());
       if (res.first == value.end()) {
@@ -33,6 +46,14 @@ namespace llvm {
       } else {
         return std::set<std::string>();
       }
+    }
+
+    void substitute(const std::string &from, const std::string &to) override {
+      replace(value, from, to);
+    }
+
+    MatcherPtr clone() const override {
+      return make_unique<ConstMatcher>(std::string(value));
     }
   };
 
@@ -56,16 +77,33 @@ namespace llvm {
       add_matcher(std::move(matcher));
       add_matcher(std::forward<Args>(other_matchers)...);
     }
+
+    ListMatcher() = default;
     template <typename ... Args>
     ListMatcher(Args &&...matchers) {
       add_matcher(std::forward<Args>(matchers)...);
+    }
+
+    void substitute(const std::string &from, const std::string &to) override {
+      for(MatcherPtr &matcher : matchers) {
+        matcher->substitute(from, to);
+      }
+    }
+
+    void clone_from(const ListMatcher &other) {
+      matchers.clear();
+      for (const MatcherPtr &matcher : other.matchers) {
+        add_matcher(matcher->clone());
+      }
     }
   };
 
   class OptionMatcher : public ListMatcher {
   public:
+    OptionMatcher() = default;
     template <typename ... Args>
     OptionMatcher(Args &&...matchers) : ListMatcher(std::forward<Args>(matchers)...) {}
+
     std::set<std::string> match_prefix(const std::string &str) const override {
       std::set<std::string> postfixes;
       for (const std::unique_ptr<Matcher> &matcher : matchers) {
@@ -73,71 +111,76 @@ namespace llvm {
       }
       return postfixes;
     }
-  };
 
-  /*
-  class CartesianMatcher : public ListMatcher {
-  public:
-    CartesianMatcher(std::list<MatcherPtr> &&matchers);
-    std::set<std::string> match_prefix(const std::string &str) const override;
-  };
-
-  CartesianMatcher::CartesianMatcher(std::list<MatcherPtr> &&matchers) : ListMatcher(std::move(matchers)) {}
-
-  std::set<std::string> CartesianMatcher::match_prefix(const std::string &str) const {
-    std::set<std::string> postfixes{str};
-    for (const std::unique_ptr<Matcher> &matcher : matchers) {
-      std::set<std::string> new_postfixes;
-      for (const std::string &postfix : postfixes) {
-        merge(new_postfixes, std::move(matcher->match_prefix(postfix)));
-      }
-      postfixes = std::move(new_postfixes);
+    MatcherPtr clone() const override {
+      auto new_matcher = make_unique<OptionMatcher>();
+      new_matcher->clone_from(*this);
+      return new_matcher;
     }
-    return postfixes;
-  }
-  */
+  };
 
-  /*
-  static MatcherPtr make_const(const char *str) {
-    return make_unique<ConstMatcher>(std::string(str));
-  }
-  static void add_to_list(std::list<MatcherPtr> &list, MatcherPtr &&matcher) {
-    list.push_back(std::forward<MatcherPtr>(matcher));
-  }
+  class ProductMatcher : public ListMatcher {
+  public:
+    ProductMatcher() = default;
+    template <typename ... Args>
+    ProductMatcher(Args &&...matchers) : ListMatcher(std::forward<Args>(matchers)...) {}
+
+    std::set<std::string> match_prefix(const std::string &str) const override {
+      std::set<std::string> postfixes{str};
+      for (const std::unique_ptr<Matcher> &matcher : matchers) {
+        std::set<std::string> new_postfixes;
+        for (const std::string &postfix : postfixes) {
+          merge(new_postfixes, std::move(matcher->match_prefix(postfix)));
+        }
+        postfixes = std::move(new_postfixes);
+      }
+      return postfixes;
+    }
+
+    MatcherPtr clone() const override {
+      auto new_matcher = make_unique<OptionMatcher>();
+      new_matcher->clone_from(*this);
+      return new_matcher;
+    }
+  };
+
   template <typename ... Args>
-  static void add_to_list(std::list<MatcherPtr> &list, MatcherPtr &&matcher, Args &&...other_matchers) {
-    list.push_back(std::forward<MatcherPtr>(matcher));
-    add_to_list(list, std::forward<Args>(other_matchers)...);
-  }
-  template <typename ... Args>
-  static MatcherPtr make_option(Args &&...matchers) {
-    std::list<MatcherPtr> list;
-    add_to_list(list, std::forward<Args>(matchers)...);
-    return make_unique<OptionMatcher>(std::move(list));
+  static MatcherPtr option(Args &&...matchers) {
+    return make_unique<OptionMatcher>(std::forward<Args>(matchers)...);
   }
 
-  CLBuiltIns::CLBuiltIns() : matcher(make_option(
-    make_const("get_global_id(unsigned int)"),
-    make_const("vload2(unsigned int, float const AS1*)"),
-    make_const("vload3(unsigned int, float const AS1*)"),
-    make_const("vload4(unsigned int, float const AS1*)"),
-    make_const("vstore2(float vector[2], unsigned int, float AS1*)"),
-    make_const("vstore3(float vector[3], unsigned int, float AS1*)"),
-    make_const("vstore4(float vector[4], unsigned int, float AS1*)")
-  )) {}
-  */
-  CLBuiltIns::CLBuiltIns() : matcher(make_unique<OptionMatcher>(
-    "get_global_id(unsigned int)",
-    "vload2(unsigned int, float const AS1*)",
-    "vload3(unsigned int, float const AS1*)",
-    "vload4(unsigned int, float const AS1*)",
-    "vstore2(float vector[2], unsigned int, loat AS1*)",
-    "vstore3(float vector[3], unsigned int, float AS1*)",
-    "vstore4(float vector[4], unsigned int, float AS1*)",
-    "length(float vector[2])",
-    "length(float vector[3])",
-    "length(float vector[4])"
-  )) {}
+  template <typename ... Args>
+  static MatcherPtr product(Args &&...matchers) {
+    return make_unique<ProductMatcher>(std::forward<Args>(matchers)...);
+  }
+
+  CLBuiltIns::CLBuiltIns() {
+    auto dims = [] () { return option("2", "3", "4", "8", "16"); };
+    auto addrspace = [] () { return product("AS", option("0", "1", "2", "3")); };
+    matcher = option(
+      // Work-Item Functions
+      option(
+        "get_work_dim()",
+        "get_global_size(unsigned int)",
+        "get_global_id(unsigned int)",
+        "get_local_size(unsigned int)",
+        "get_enqueued_local_size(unsigned int)",
+        "get_local_id(unsigned int)",
+        "get_num_groups(unsigned int)",
+        "get_group_id(unsigned int)",
+        "get_global_offset(unsigned int)",
+        "get_global_linear_id()",
+        "get_local_linear_id()"
+      ),
+      product("vload", dims(), "(unsigned int, float const ", addrspace(), "*)"),
+      "vstore2(float vector[2], unsigned int, float AS1*)",
+      "vstore3(float vector[3], unsigned int, float AS1*)",
+      "vstore4(float vector[4], unsigned int, float AS1*)",
+      "length(float vector[2])",
+      "length(float vector[3])",
+      "length(float vector[4])"
+    );
+  }
 
   bool CLBuiltIns::isBuiltIn(const char *full_name) const {
     return matcher->match(full_name);

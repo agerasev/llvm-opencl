@@ -10,15 +10,22 @@
 
 
 namespace llvm {
+  class Matcher;
+  
+  typedef std::unique_ptr<Matcher> MatcherPtr;
+
   class Matcher {
   public:
     Matcher() = default;
     virtual ~Matcher() = default;
+
     virtual std::set<std::string> match_prefix(const std::string &str) const = 0;
+    virtual void substitute(const std::string &from, const std::string &to) = 0;
+    virtual MatcherPtr clone() const = 0;
+
     bool match(const std::string &str);
   };
 
-  typedef std::unique_ptr<Matcher> MatcherPtr;
 
   class CLBuiltIns {
   private:
