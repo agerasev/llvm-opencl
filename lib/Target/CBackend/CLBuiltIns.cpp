@@ -4,6 +4,7 @@
 #include <vector>
 #include <initializer_list>
 #include <sstream>
+#include <functional>
 
 #include "llvm/Demangle/Demangle.h"
 
@@ -142,33 +143,24 @@ namespace llvm_cbe {
     const Func &func,
     Function *F, std::function<std::string(Value *)> GetName
   ) const {
-    std::string _out;
-    raw_string_ostream out(_out);
-
-    auto sp = split(demangled, "(");
-    std::string name = sp[0], stypes = sp[1];
-    replace(stypes, ")", "");
-    std::vector<std::string> types = split(stypes, ", ");
+    std::stringstream out;
 
     out << "return ";
-    // FIXME: Also cast return type
-    /*
     if (dyn_cast<VectorType>(F->getReturnType())) {
-      
+      out << "convert_" << func.ret;
     } else {
-
+      out << "(" << func.ret << ")";
     }
-    */
-    out << name << "(";
+    out << func.name << "(";
     int i = 0;
     for (auto &a : F->args()) {
       if (i > 0) {
         out << ", ";
       }
       if (dyn_cast<VectorType>(a.getType())) {
-        out << "convert_" << types[i];
+        out << "convert_" << func.args[i];
       } else {
-        out << "(" << types[i] << ")";
+        out << "(" << func.args[i] << ")";
       }
       out << "(" << GetName(&a) << ")";
       i += 1;
@@ -178,48 +170,85 @@ namespace llvm_cbe {
     return out.str();
   }
 
-  template <typename ... Args>
-  static MatcherPtr option(Args &&...matchers) {
-    return make_unique<OptionMatcher>(std::forward<Args>(matchers)...);
+  int CLBuiltIns::add_functions(const std::initializer_list<Func> &list) {
+    int n = 0;
+    for (const Func &f : list) {
+      n += set.insert(f).second;
+    }
+    return n;
   }
 
-  template <typename ... Args>
-  static MatcherPtr option_sync(Args &&...matchers) {
-    return make_unique<SyncOptionMatcher>(std::forward<Args>(matchers)...);
+  template <typename T>
+  using bunch<T> = std::vector<T>;
+
+  template <typename T>
+  bunch<T> operator+(const bunch<T> &a, const bunch<T> &b) {
+    bunch<T> r;
+    r.reserve(a.size() + b.size());
+    for (T x : a) {
+      r.push_back(x);
+    }
+    for (T y : b) {
+      r.push_back(y);
+    }
+    return r;
   }
 
-  template <typename ... Args>
-  static MatcherPtr product(Args &&...matchers) {
-    return make_unique<ProductMatcher>(std::forward<Args>(matchers)...);
+  template <typename T, typename S>
+  bunch<std::pair<T, S>> operator*(const bunch<T> &a, const bunch<S> &b) {
+    bunch<std::pair<T, S>> r;
+    r.reserve(a.size()*b.size());
+    for (T x : a) {
+      for (T y : b) {
+        r.push_back(std::pair<T, S>(x, y));
+      }
+    }
+    return r;
+  }
+
+  template <typename T, typename U>
+  bunch<U> map(const bunch<T> &a, std::function<U(T)> f) {
+    bunch<U> r;
+    r.reserve(a.size());
+    for (T x : a) {
+      r.push_back(f(x));
+    }
+    return r;
+  }
+
+  std::string concat(std::pair<std::string, std::string> p) {
+    return p.first + p.second;
   }
 
   CLBuiltIns::CLBuiltIns() {
-    SyncMatcher dim(option_sync("2", "3", "4", "8", "16"));
-    SyncMatcher gendim(option_sync("", "2", "3", "4", "8", "16"));
-    SyncMatcher typei(option_sync("char", "uchar", "short", "ushort", "int", "uint", "long", "ulong"));
-    SyncMatcher typef(option_sync("float", "double"));
-    SyncMatcher type(option_sync(typei(), typef()));
-    SyncMatcher vectype(product(type(), dim()));
-    SyncMatcher vectypei(product(typei(), dim()));
-    SyncMatcher vectypef(product(typef(), dim()));
-    SyncMatcher gentype(product(type(), gendim()));
-    SyncMatcher gentypei(product(typei(), gendim()));
-    SyncMatcher gentypef(product(typef(), gendim()));
-    SyncMatcher addrspace(product("AS", option_sync("0", "1", "2", "3")));
+    std::vector<std::string> dim{"2", "3", "4", "8", "16"};
+    std::vector<std::string> gendim{"", "2", "3", "4", "8", "16"};
+    /*
+    std::vector<std::string> typei{"char", "uchar", "short", "ushort", "int", "uint", "long", "ulong"};
+    std::vector<std::string> typef{"float", "double"};
+    std::vector<std::string> type;
+    for (const auto &{option_sync(typei(), typef())};
+    std::vector<std::string> vectype{product(type(), dim())};
+    std::vector<std::string> vectypei{product(typei(), dim())};
+    std::vector<std::string> vectypef{product(typef(), dim())};
+    std::vector<std::string> gentype{product(type(), gendim())};
+    std::vector<std::string> gentypei{product(typei(), gendim())};
+    std::vector<std::string> gentypef{product(typef(), gendim())};
+    std::vector<std::string> addrspace{product("AS", option_sync("0", "1", "2", "3"))};
     matcher = option(
       // Work-Item Functions
       option(
-        "get_work_dim()",
-        "get_global_size(uint)",
-        "get_global_id(uint)",
-        "get_local_size(uint)",
-        "get_enqueued_local_size(uint)",
-        "get_local_id(uint)",
-        "get_num_groups(uint)",
-        "get_group_id(uint)",
-        "get_global_offset(uint)",
-        "get_global_linear_id()",
-        "get_local_linear_id()"
+        Func("uint", "get_work_dim", {}),
+        Func("size_t", "get_global_size", {"uint"}),
+        Func("size_t", "get_global_id", {"uint"}),
+        Func("size_t", "get_local_size", {"uint"}),
+        Func("size_t", "get_enqueued_local_size", {"uint"}),
+        Func("size_t", "get_local_id", {"uint"}),
+        Func("size_t", "get_num_groups", {"uint"}),
+        Func("size_t", "get_group_id", {"uint"}),
+        Func("size_t", "get_global_offset", {"uint"}),
+        Func("size_t", "get_global_linear_id", {}),
+        Func("size_t", "get_local_linear_id", {})
       ),
       // Math Functions
       option(
@@ -298,5 +327,6 @@ namespace llvm_cbe {
       product("vstore", dim(), "(", gentype(), ", uint, ", type(), " ", addrspace(), "*)"),
       product("length(float", dim(), ")")
     );
+    */
   }
 } // namespace llvm

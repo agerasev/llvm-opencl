@@ -30,6 +30,7 @@ namespace llvm_cbe {
   class CLBuiltIns {
   private:
     std::set<Func> set;
+    int add_functions(const std::initializer_list<Func> &list);
   public:
     CLBuiltIns();
     static int demangle(const char *mangled_name, Func *demangled);
