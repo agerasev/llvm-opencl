@@ -2,24 +2,14 @@
 
 #include <algorithm>
 #include <vector>
+#include <initializer_list>
+#include <sstream>
 
 #include "llvm/Demangle/Demangle.h"
 
 
 namespace llvm_cbe {
   using namespace llvm;
-
-  bool Matcher::match(const std::string &str) {
-    auto postfixes = match_prefix(str);
-    return postfixes.find(MatchInfo("")) != postfixes.end();
-  }
-
-  // FIXME: Use C++17 set.merge()
-  static void merge(std::set<MatchInfo> &dst, std::set<MatchInfo> &&src) {
-    for (const MatchInfo &info : src) {
-      dst.insert(MatchInfo(info.tail, std::move(info.sync)));
-    }
-  }
 
   static void replace(std::string &str, const std::string &from, const std::string &to) {
     size_t pos = 0;
@@ -47,184 +37,109 @@ namespace llvm_cbe {
     return out;
   }
 
-  MatchInfo::MatchInfo(const std::string &tail) : tail(tail) {}
-  MatchInfo::MatchInfo(const std::string &tail, std::map<const Matcher *, int> &&sync) :
-    tail(tail), sync(std::move(sync))
+  Func::Func() {}
+  Func::Func(const std::string &ret, const std::string &name, const std::initializer_list<std::string> &args) :
+    name(name), ret(ret), args(args)
   {}
 
-  bool MatchInfo::operator<(const MatchInfo &other) const {
-    return tail < other.tail;
+  Func::Func(const std::string &signature) {
+    size_t name_end = signature.find('(');
+    size_t name_begin = signature.rfind(' ', name_end);
+    if (name_begin == std::string::npos) {
+      name_begin = 0;
+    }
+    name = std::move(signature.substr(name_begin, name_end));
+    ret = std::move(signature.substr(0, name_begin - 1));
+    args = std::move(split(signature.substr(name_end + 1, signature.size() - 1), ", "));
   }
 
-  class ConstMatcher : public Matcher {
-  private:
-    std::string value;
-  public:
-    ConstMatcher(const char *value) : value(value) {}
-    ConstMatcher(std::string &&value) : value(std::move(value)) {}
-
-    std::set<MatchInfo> match_prefix(MatchInfo &&info) const override {
-      auto res = std::mismatch(value.begin(), value.end(), info.tail.begin());
-      if (res.first == value.end()) {
-        return std::set<MatchInfo>{
-          MatchInfo(
-            info.tail.substr(value.size(), info.tail.size() - value.size()),
-            std::move(info.sync)
-          )
-        };
-      } else {
-        return std::set<MatchInfo>();
+  std::string Func::to_string(bool with_ret=true) {
+    std::stringstream out;
+    if (with_ret) {
+      out << ret << " ";
+    }
+    out << name << "(";
+    for (int i = 0; i < args.size(); ++i) {
+      if (i > 0) {
+        out << ", ";
       }
+      out << args[i];
     }
-  };
+    out << ")";
+  }
 
-  class ListMatcher : public Matcher {
-  protected:
-    std::list<MatcherPtr> matchers;
-  public:
-    void add_matcher(std::string &&value) {
-      matchers.push_back(make_unique<ConstMatcher>(std::move(value)));
-    }
-    void add_matcher(MatcherPtr &&matcher) {
-      matchers.push_back(std::move(matcher));
-    }
-    template <typename ... Args>
-    void add_matcher(std::string &&value, Args &&...other_matchers) {
-      add_matcher(std::move(value));
-      add_matcher(std::forward<Args>(other_matchers)...);
-    }
-    template <typename ... Args>
-    void add_matcher(MatcherPtr &&matcher, Args &&...other_matchers) {
-      add_matcher(std::move(matcher));
-      add_matcher(std::forward<Args>(other_matchers)...);
-    }
-
-    ListMatcher() = default;
-    template <typename ... Args>
-    ListMatcher(Args &&...matchers) {
-      add_matcher(std::forward<Args>(matchers)...);
-    }
-  };
-
-  class OptionMatcher : public ListMatcher {
-  public:
-    OptionMatcher() = default;
-    template <typename ... Args>
-    OptionMatcher(Args &&...matchers) : ListMatcher(std::forward<Args>(matchers)...) {}
-
-    std::set<MatchInfo> match_prefix(MatchInfo &&info) const override {
-      std::set<MatchInfo> postfixes;
-      for (const std::unique_ptr<Matcher> &matcher : matchers) {
-        merge(postfixes, matcher->match_prefix(MatchInfo(info)));
+  bool Func::operator<(const Func &other) const {
+    if (name < other.name) {
+      return true;
+    } else if (name > other.name) {
+      return false;
+    } else {
+      if (args.size() < other.args.size()) {
+        return true;
+      } else if (args.size() < other.args.size()) {
+        return false;
       }
-      return postfixes;
-    }
-  };
-
-  class ProductMatcher : public ListMatcher {
-  public:
-    ProductMatcher() = default;
-    template <typename ... Args>
-    ProductMatcher(Args &&...matchers) : ListMatcher(std::forward<Args>(matchers)...) {}
-
-    std::set<MatchInfo> match_prefix(MatchInfo &&info) const override {
-      std::set<MatchInfo> postfixes{std::move(info)};
-      for (const std::unique_ptr<Matcher> &matcher : matchers) {
-        std::set<MatchInfo> new_postfixes;
-        for (const MatchInfo &postfix : postfixes) {
-          merge(new_postfixes, matcher->match_prefix(MatchInfo(postfix)));
+      for (int i = 0; i < args.size(); ++i) {
+        if (args[i] < other.args[i]) {
+          return true;
+        } else if (args[i] > other.args[i]) {
+          return false;
         }
-        postfixes = std::move(new_postfixes);
-      }
-      return postfixes;
-    }
-  };
-
-  class SyncOptionMatcher : public OptionMatcher {
-  public:
-    SyncOptionMatcher() {}
-    template <typename ... Args>
-    SyncOptionMatcher(Args &&...matchers) : OptionMatcher(std::forward<Args>(matchers)...) {}
-
-    std::set<MatchInfo> match_prefix(MatchInfo &&info) const override {
-      auto it = info.sync.find(this);
-      if (it == info.sync.end()) { 
-        std::set<MatchInfo> postfixes;
-        int i = 0;
-        for (const std::unique_ptr<Matcher> &matcher : matchers) {
-          std::map<const Matcher *, int> new_sync = info.sync;
-          new_sync.insert(std::pair<const Matcher *, int>(this, i));
-          merge(postfixes, matcher->match_prefix(MatchInfo(info.tail, std::move(new_sync))));
-          i += 1;
-        }
-        return postfixes;
-      } else {
-        auto mit = matchers.begin();
-        std::advance(mit, it->second);
-        return (*mit)->match_prefix(std::move(info));
       }
     }
-  };
+  }
 
-  // FIXME: It is possible to create a loop using SyncMatcher
-  //        which will result in memory leak
-  class SyncMatcher : public Matcher {
-  protected:
-    std::shared_ptr<Matcher> matcher;
-    SyncMatcher(const std::shared_ptr<Matcher> &matcher) : matcher(matcher) {}
-  public:
-    SyncMatcher(MatcherPtr &&matcher) : matcher(std::move(matcher)) {}
-
-    std::set<MatchInfo> match_prefix(MatchInfo &&info) const override {
-      return matcher->match_prefix(std::move(info));
-    }
-
-    std::unique_ptr<SyncMatcher> clone() const {
-      return std::unique_ptr<SyncMatcher>(new SyncMatcher(matcher));
-    }
-    std::unique_ptr<SyncMatcher> operator()() const {
-      return clone();
-    }
-  };
-
-  int CLBuiltIns::checkBuiltIn(const char *mangled_name, std::string *demangled) const {
-    std::string name;
+  int CLBuiltIns::demangle(const char *mangled_name, Func *demangled) {
+    std::string signature;
 
     ItaniumPartialDemangler dmg;
     if (dmg.partialDemangle(mangled_name)) {
 #ifndef NDEBUG
-      // errs() << "Cannot demangle function '" << I->getName() << "'\n";
+      //errs() << "Cannot demangle function '" << mangled_name << "'\n";
 #endif
+      return 0;
     } else {
       size_t size = 0;
       char *buf = dmg.finishDemangle(nullptr, &size);
       if (buf == nullptr) {
         return -1;
       }
-      name = std::string(buf);
+      signature = std::string(buf);
       std::free(buf);
     }
 
-    replace(name, "unsigned ", "u");
-    replace(name, " vector[", "");
-    replace(name, "]", "");
+    Func func(signature);
 
-    int res = matcher->match(name);
+    for (std::string &arg : func.args) {
+      replace(signature, "unsigned ", "u");
+      replace(signature, " vector[", "");
+      replace(signature, "]", "");
 
-    replace(name, "AS0", "__private ");
-    replace(name, "AS1", "__global ");
-    replace(name, "AS2", "__constant ");
-    replace(name, "AS3", "__local ");
-
-    if (demangled) {
-      *demangled = name;
+      replace(signature, "AS0", "__private");
+      replace(signature, "AS1", "__global");
+      replace(signature, "AS2", "__constant");
+      replace(signature, "AS3", "__local");
     }
 
-    return res;
+    if (demangled) {
+      *demangled = func;
+    }
+
+    return 1;
+  }
+
+  int CLBuiltIns::find(Func &func) const {
+    auto it = set.find(func);
+    if (it != set.end()) {
+      func.ret = it->ret;
+      return 1;
+    } else {
+      return 0;
+    }
   }
 
   std::string CLBuiltIns::getBuiltInDef(
-    const std::string &demangled,
+    const Func &func,
     Function *F, std::function<std::string(Value *)> GetName
   ) const {
     std::string _out;
