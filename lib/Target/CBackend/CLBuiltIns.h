@@ -7,6 +7,7 @@
 #include <memory>
 #include <list>
 #include <set>
+#include <map>
 
 
 namespace llvm {
@@ -14,15 +15,29 @@ namespace llvm {
   
   typedef std::unique_ptr<Matcher> MatcherPtr;
 
+  class MatchInfo {
+  public:
+    std::string tail;
+    mutable std::map<const Matcher *, int> sync;
+
+    MatchInfo(const std::string &tail);
+    MatchInfo(const std::string &tail, std::map<const Matcher *, int> &&sync);
+
+    MatchInfo(const MatchInfo &) = default;
+    MatchInfo &operator=(const MatchInfo &) = default;
+
+    MatchInfo(MatchInfo &&) = default;
+    MatchInfo &operator=(MatchInfo &&) = default;
+
+    bool operator<(const MatchInfo &other) const;
+  };
+
   class Matcher {
   public:
     Matcher() = default;
     virtual ~Matcher() = default;
 
-    virtual std::set<std::string> match_prefix(const std::string &str) const = 0;
-    virtual void substitute(const std::string &from, const std::string &to) = 0;
-    virtual MatcherPtr clone() const = 0;
-
+    virtual std::set<MatchInfo> match_prefix(MatchInfo &&info) const = 0;
     bool match(const std::string &str);
   };
 
