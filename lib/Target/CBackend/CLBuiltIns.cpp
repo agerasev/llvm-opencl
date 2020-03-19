@@ -203,60 +203,71 @@ namespace llvm_cbe {
     return n;
   }
 
-  template <typename T>
-  using bunch = std::vector<T>;
-
-  template <typename T>
-  std::vector<T> operator+(const std::vector<T> &a, const std::vector<T> &b) {
-    std::vector<T> r;
+  std::vector<std::string> operator+(const std::vector<std::string> &a, const std::vector<std::string> &b) {
+    std::vector<std::string> r;
     r.reserve(a.size() + b.size());
-    for (T x : a) {
+    for (std::string x : a) {
       r.push_back(x);
     }
-    for (T y : b) {
+    for (std::string y : b) {
+      r.push_back(y);
+    }
+    return r;
+  }
+  std::vector<std::string> operator+(const std::vector<std::string> &a, const std::string &b) {
+    std::vector<std::string> r;
+    r.reserve(a.size() + 1);
+    for (std::string x : a) {
+      r.push_back(x);
+    }
+    r.push_back(b);
+    return r;
+  }
+  std::vector<std::string> operator+(const std::string &a, const std::vector<std::string> &b) {
+    std::vector<std::string> r;
+    r.reserve(1 + b.size());
+    r.push_back(a);
+    for (std::string y : b) {
       r.push_back(y);
     }
     return r;
   }
 
-  template <typename T, typename S>
-  std::vector<std::pair<T, S>> operator*(const std::vector<T> &a, const std::vector<S> &b) {
-    std::vector<std::pair<T, S>> r;
+  std::vector<std::string> operator*(const std::vector<std::string> &a, const std::vector<std::string> &b) {
+    std::vector<std::string> r;
     r.reserve(a.size()*b.size());
-    for (T x : a) {
-      for (T y : b) {
-        r.push_back(std::pair<T, S>(x, y));
+    for (std::string x : a) {
+      for (std::string y : b) {
+        r.push_back(x + y);
       }
     }
     return r;
   }
-
-  template <typename U, typename T, typename F>
-  std::vector<U> map(const std::vector<T> &a, F f) {
-    std::vector<U> r;
+  std::vector<std::string> operator*(const std::vector<std::string> &a, const std::string &b) {
+    std::vector<std::string> r;
     r.reserve(a.size());
-    for (T x : a) {
-      r.push_back(f(x));
+    for (std::string x : a) {
+      r.push_back(x + b);
+    }
+    return r;
+  }
+  std::vector<std::string> operator*(const std::string &a, const std::vector<std::string> &b) {
+    std::vector<std::string> r;
+    r.reserve(b.size());
+    for (std::string y : b) {
+      r.push_back(a + y);
     }
     return r;
   }
 
-  std::string concat(std::pair<std::string, std::string> p) {
-    return p.first + p.second;
-  }
-
   CLBuiltIns::CLBuiltIns() {
     std::vector<std::string> dim{"2", "3", "4", "8", "16"};
-    std::vector<std::string> gendim{"", "2", "3", "4", "8", "16"};
-    std::vector<std::string> typei{"char", "uchar", "short", "ushort", "int", "uint", "long", "ulong"};
+    std::vector<std::string> gendim = "" + dim;
+    std::vector<std::string> typeis{"char", "short", "int", "long"};
+    std::vector<std::string> typeiu = "u"*typeis;
+    std::vector<std::string> typei = typeis + typeiu;
     std::vector<std::string> typef{"float", "double"};
     std::vector<std::string> type = typei + typef;
-    std::vector<std::string> vectype{map<std::string>(type*dim, concat)};
-    std::vector<std::string> vectypei{map<std::string>(typei*dim, concat)};
-    std::vector<std::string> vectypef{map<std::string>(typef*dim, concat)};
-    std::vector<std::string> gentype{map<std::string>(type*gendim, concat)};
-    std::vector<std::string> gentypei{map<std::string>(typei*gendim, concat)};
-    std::vector<std::string> gentypef{map<std::string>(typef*gendim, concat)};
     std::vector<std::string> addrspace{"__private", "__global", "__constant", "__local"};
 
     // Work-Item Functions
@@ -275,8 +286,8 @@ namespace llvm_cbe {
     });
 
     // Math Functions
-    for (std::string tf : typef) {
-      for (std::string gd : gendim) {
+    for (std::string gd : gendim) {
+      for (std::string tf : typef) {
         std::string gtf = tf + gd;
         add_functions({
           Func(gtf, "acos", {gtf}),
@@ -349,6 +360,45 @@ namespace llvm_cbe {
           Func(gtf, "tanpi", {gtf}),
           Func(gtf, "tgamma", {gtf}),
           Func(gtf, "trunc", {gtf}),
+        });
+      }
+    }
+
+    // Integer Functions
+    for (std::string gd : gendim) {
+      for (std::string ti : typei) {
+        add_functions({
+          Func(ti+gd, "add_sat", { ti+gd, ti+gd }),
+          Func(ti+gd, "hadd", { ti+gd, ti+gd }),
+          Func(ti+gd, "rhadd", { ti+gd, ti+gd }),
+          Func(ti+gd, "clamp", { ti+gd, ti+gd, ti+gd }),
+          Func(ti+gd, "clz", { ti+gd }),
+          Func(ti+gd, "ctz", { ti+gd }),
+          Func(ti+gd, "mad_hi", { ti+gd, ti+gd, ti+gd }),
+          Func(ti+gd, "mad_sat", { ti+gd, ti+gd, ti+gd }),
+          Func(ti+gd, "max", { ti+gd, ti+gd }),
+          Func(ti+gd, "min", { ti+gd, ti+gd }),
+          Func(ti+gd, "mul_hi", { ti+gd, ti+gd }),
+          Func(ti+gd, "rotate", { ti+gd, ti+gd }),
+          Func(ti+gd, "sub_sat", { ti+gd, ti+gd }),
+          Func(ti+gd, "popcount", { ti+gd }),
+        });
+      }
+      for (std::string s : {"", "u"}) {
+        add_functions({
+          Func(s+"short"+gd, "upsample", { s+"char"+gd, "uchar"+gd }),
+          Func(s+"int"+gd, "upsample", { s+"short"+gd, "ushort"+gd }),
+          Func(s+"long"+gd, "upsample", { s+"int"+gd, "uint"+gd }),
+        });
+      }
+      for (std::string tis : typeis) {
+        std::string tiu = "u"+tis;
+        add_functions({
+          Func(tiu+gd, "abs", { tis+gd }),
+          Func(tiu+gd, "abs_diff", { tis+gd, tis+gd }),
+          Func(tiu+gd, "clamp", { tiu+gd, tis+gd, tis+gd }),
+          Func(tiu+gd, "max", { tiu+gd, tis+gd }),
+          Func(tiu+gd, "min", { tiu+gd, tis+gd }),
         });
       }
     }
