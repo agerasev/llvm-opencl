@@ -1,6 +1,5 @@
 #include "CLBuiltIns.h"
 
-#include <iostream>
 #include <algorithm>
 #include <vector>
 #include <initializer_list>
@@ -260,6 +259,19 @@ namespace llvm_cbe {
     return r;
   }
 
+  std::vector<std::pair<std::string, std::string>> zip(
+    const std::vector<std::string> &a,
+    const std::vector<std::string> &b
+  ) {
+    int n = std::min(a.size(), b.size());
+    std::vector<std::pair<std::string, std::string>> r;
+    r.reserve(n);
+    for (int i = 0; i < n; ++i) {
+      r.push_back(std::make_pair(a[i], b[i]));
+    }
+    return r;
+  }
+
   CLBuiltIns::CLBuiltIns() {
     std::vector<std::string> dim{"2", "3", "4", "8", "16"};
     std::vector<std::string> gendim = "" + dim;
@@ -403,6 +415,108 @@ namespace llvm_cbe {
       }
     }
 
+    // Common Functions
+    for (std::string gd : gendim) {
+      for (std::string tf : typef) {
+        add_functions({
+          Func(tf+gd, "clamp", { tf+gd, tf+gd, tf+gd }),
+          Func(tf+gd, "clamp", { tf+gd, tf, tf }),
+          Func(tf+gd, "degrees", { tf+gd }),
+          Func(tf+gd, "max", { tf+gd, tf+gd }),
+          Func(tf+gd, "max", { tf+gd, tf }),
+          Func(tf+gd, "min", { tf+gd, tf+gd }),
+          Func(tf+gd, "min", { tf+gd, tf }),
+          Func(tf+gd, "mix", { tf+gd, tf+gd, tf+gd }),
+          Func(tf+gd, "mix", { tf+gd, tf+gd, tf }),
+          Func(tf+gd, "radians", { tf+gd }),
+          Func(tf+gd, "step", { tf+gd, tf+gd }),
+          Func(tf+gd, "step", { tf, tf+gd }),
+          Func(tf+gd, "smoothstep", { tf+gd, tf+gd, tf+gd }),
+          Func(tf+gd, "smoothstep", { tf, tf, tf+gd }),
+          Func(tf+gd, "sign", { tf+gd }),
+        });
+      }
+    }
+
+    // Geometric Functions
+    for (std::string tf : typef) {
+      for (std::string d : {"3", "4"}) {
+        add_functions({
+          Func(tf+d, "cross", { tf+d, tf+d }),
+        });
+      }
+      for (std::string d : dim) {
+        add_functions({
+          Func(tf, "dot", { tf+d, tf+d }),
+          Func(tf, "distance", { tf+d, tf+d }),
+          Func(tf, "length", { tf+d }),
+          Func(tf+d, "normalize", { tf+d }),
+          Func(tf, "fast_distance", { tf+d, tf+d }),
+          Func(tf, "fast_length", { tf+d }),
+          Func(tf+d, "fast_normalize", { tf+d }),
+        });
+      }
+    }
+
+    // Relational Function
+    for (std::string d : dim) {
+      for (auto p : zip({"int", "long"}, {"float", "double"})) {
+        add_functions({
+          Func(p.first+d, "isequal", { p.second+d, p.second+d }),
+          Func(p.first+d, "isnotequal", { p.second+d, p.second+d }),
+          Func(p.first+d, "isgreater", { p.second+d, p.second+d }),
+          Func(p.first+d, "isgreaterequal", { p.second+d, p.second+d }),
+          Func(p.first+d, "isless", { p.second+d, p.second+d }),
+          Func(p.first+d, "islessequal", { p.second+d, p.second+d }),
+          Func(p.first+d, "islessgreater", { p.second+d, p.second+d }),
+          Func(p.first+d, "isfinite", { p.second+d }),
+          Func(p.first+d, "isinf", { p.second+d }),
+          Func(p.first+d, "isnan", { p.second+d }),
+          Func(p.first+d, "isnormal", { p.second+d }),
+          Func(p.first+d, "isordered", { p.second+d, p.second+d }),
+          Func(p.first+d, "isunordered", { p.second+d, p.second+d }),
+          Func(p.first+d, "signbit", { p.second+d }),
+        });
+      }
+    }
+    for (std::string tf : typef) {
+      add_functions({
+        Func("int", "isequal", { tf, tf }),
+        Func("int", "isnotequal", { tf, tf }),
+        Func("int", "isgreater", { tf, tf }),
+        Func("int", "isgreaterequal", { tf, tf }),
+        Func("int", "isless", { tf, tf }),
+        Func("int", "islessequal", { tf, tf }),
+        Func("int", "islessgreater", { tf, tf }),
+        Func("int", "isfinite", { tf }),
+        Func("int", "isinf", { tf }),
+        Func("int", "isnan", { tf }),
+        Func("int", "isnormal", { tf }),
+        Func("int", "isordered", { tf, tf }),
+        Func("int", "isunordered", { tf, tf }),
+        Func("int", "signbit", { tf }),
+      });
+    }
+    for(std::string gtis : typeis*gendim) {
+      add_functions({
+        Func("int", "any", { gtis }),
+        Func("int", "all", { gtis }),
+      });
+    }
+    for (std::string gd : gendim) {
+      for (std::string t : type) {
+        add_functions({
+          Func(t+gd, "bitselect", { t+gd, t+gd, t+gd }),
+        });
+        for (std::string ti : typei) {
+          add_functions({
+            Func(t+gd, "select", { t+gd, t+gd, ti+gd }),
+          });
+        }
+      }
+    }
+
+    // Vector Data Load and Store Functions
     for (std::string t : type) {
       for (std::string d : dim) {
         std::string vt = t + d;
@@ -414,13 +528,13 @@ namespace llvm_cbe {
         }
       }
     }
-    for (std::string tf : typef) {
-      for (std::string d : dim) {
-        std::string vtf = tf + d;
-        add_functions({
-          Func(tf, "length", {vtf}),
-        });
-      }
-    }
+
+    // TODO:
+    // Synchronization Functions
+    // Async Copy and Prefetch
+    // Atomic Functions
+    // Miscellaneous Vector Functions
+    // Image Read and Write Functions
+    // Work-group Functions
   }
 } // namespace llvm
