@@ -23,7 +23,7 @@ namespace llvm_cbe {
     Func();
     Func(const std::string &ret, const std::string &name, const std::initializer_list<std::string> &args);
     Func(const std::string &signature);
-    std::string to_string(bool with_ret=true);
+    std::string to_string(bool with_ret=true) const;
     bool operator<(const Func &other) const;
   };
 
@@ -35,9 +35,12 @@ namespace llvm_cbe {
     CLBuiltIns();
     static int demangle(const char *mangled_name, Func *demangled);
     int find(Func &func) const;
+    int findMangled(const char *mangled_name, Func *demangled);
     std::string getDef(
       const Func &func,
-      Function *F, std::function<std::string(Value *)> GetName
+      Function *F,
+      std::function<std::string(Value *)> GetValueName,
+      std::function<std::string(Type *)> GetTypeName
     ) const;
   };
 } // namespace llvm
