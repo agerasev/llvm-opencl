@@ -1443,13 +1443,13 @@ std::string CWriter::GetValueName(Value *Operand) {
 
   // Mangle globals with the standard mangler interface for LLC compatibility.
   if (isa<GlobalValue>(Operand)) {
-    switch (builtins.checkBuiltIn(Name.data(), nullptr)) {
+    switch (builtins.findMangled(Name.data(), nullptr)) {
     case -1:
       errorWithMessage("Built-in check unexpected error");
     case 0:
       return CBEMangle(Name);
     case 1:
-      return "_builtin_wrap" + CBEMangle(Name);
+      return "_builtin" + CBEMangle(Name);
     }
   }
 
@@ -1943,32 +1943,43 @@ void CWriter::generateHeader(Module &M) {
     }
 
     // Skip OpenCL built-in functions
-    std::string demangled;
-    switch (builtins.checkBuiltIn(I->getName().data(), &demangled)) {
+    Func demangled;
+    switch (builtins.findMangled(I->getName().data(), &demangled)) {
     case -1:
       errorWithMessage("Built-in check unexpected error");
       break;
     case 1: {
       // Is opencl built-in
-      Out << "// " << demangled << "\n";
+      Out << "// " << demangled.to_string() << "\n";
       Out << "static ";
       iterator_range<Function::arg_iterator> args = I->args();
       printFunctionProto(Out, I->getFunctionType(),
                         std::make_pair(I->getAttributes(), I->getCallingConv()),
                         GetValueName(&*I), &args);
-      Out << " {\n  " << builtins.getBuiltInDef(
-        demangled, &*I, [this](Value *Operand) { return this->GetValueName(Operand); }
+      Out << " {\n  " << builtins.getDef(
+        demangled,
+        &*I,
+        [this](Value *Operand) { return this->GetValueName(Operand); },
+        [this](Type *Ty) {
+          std::string _out;
+          raw_string_ostream out(_out);
+          printTypeName(out, Ty, false);
+          out.str();
+          return _out;
+        }
       ) << ";\n}\n";
       break;
     }
     case 0:
       // Is not opencl built-in
+      Out << "// " << demangled.to_string(false) << "\n";
       if (I->hasLocalLinkage())
         Out << "static ";
       if (I->hasExternalWeakLinkage())
         Out << "extern ";
       printFunctionProto(Out, &*I);
       Out << ";\n";
+      break;
     }
   }
 

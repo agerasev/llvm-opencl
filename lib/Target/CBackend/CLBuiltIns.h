@@ -2,10 +2,8 @@
 #define CLBUILTINS_H
 
 #include <string>
-#include <memory>
-#include <list>
 #include <set>
-#include <map>
+#include <initializer_list>
 #include <functional>
 
 #include "llvm/ADT/STLExtras.h"
@@ -17,45 +15,32 @@
 namespace llvm_cbe {
   using namespace llvm;
 
-  class Matcher;
-  
-  typedef std::unique_ptr<Matcher> MatcherPtr;
-
-  class MatchInfo {
+  class Func {
   public:
-    std::string tail;
-    mutable std::map<const Matcher *, int> sync;
-
-    MatchInfo(const std::string &tail);
-    MatchInfo(const std::string &tail, std::map<const Matcher *, int> &&sync);
-
-    MatchInfo(const MatchInfo &) = default;
-    MatchInfo &operator=(const MatchInfo &) = default;
-
-    MatchInfo(MatchInfo &&) = default;
-    MatchInfo &operator=(MatchInfo &&) = default;
-
-    bool operator<(const MatchInfo &other) const;
-  };
-
-  class Matcher {
-  public:
-    Matcher() = default;
-    virtual ~Matcher() = default;
-
-    virtual std::set<MatchInfo> match_prefix(MatchInfo &&info) const = 0;
-    bool match(const std::string &str);
+    std::string name;
+    std::string ret;
+    std::vector<std::string> args;
+    Func();
+    Func(const std::string &ret, const std::string &name, const std::initializer_list<std::string> &args);
+    Func(const std::string &signature);
+    std::string to_string(bool with_ret=true) const;
+    bool operator<(const Func &other) const;
   };
 
   class CLBuiltIns {
   private:
-    MatcherPtr matcher;
+    std::set<Func> set;
+    int add_functions(const std::initializer_list<Func> &list);
   public:
     CLBuiltIns();
-    int checkBuiltIn(const char *mangled_name, std::string *demangled) const;
-    std::string getBuiltInDef(
-      const std::string &demangled,
-      Function *F, std::function<std::string(Value *)> GetName
+    static int demangle(const char *mangled_name, Func *demangled);
+    int find(Func &func) const;
+    int findMangled(const char *mangled_name, Func *demangled);
+    std::string getDef(
+      const Func &func,
+      Function *F,
+      std::function<std::string(Value *)> GetValueName,
+      std::function<std::string(Type *)> GetTypeName
     ) const;
   };
 } // namespace llvm
