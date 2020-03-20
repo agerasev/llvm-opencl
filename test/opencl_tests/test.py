@@ -110,6 +110,7 @@ if __name__ == "__main__":
 
         except Exception as e:
             print("[fail] {}".format(modpath))
+            print("src: {}".format(src))
             raise
         else:
             print("[ok] {}".format(modpath))

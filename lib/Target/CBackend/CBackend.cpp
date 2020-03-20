@@ -2038,7 +2038,7 @@ void CWriter::generateHeader(Module &M) {
     VectorType *VTy = dyn_cast<VectorType>(*it);
     if (VTy) {
       Type *ElTy = VTy->getElementType();
-      Out << "  return select(ifnot, iftrue, -convert_";
+      Out << "  return select(ifnot, iftrue, convert_";
       switch (ElTy->getTypeID()) {
       case Type::IntegerTyID:
         printTypeName(Out, ElTy, true);
@@ -2057,7 +2057,10 @@ void CWriter::generateHeader(Module &M) {
 #endif
         errorWithMessage("Unknown vector element type");
       }
-      Out << VTy->getNumElements() << "(condition));\n";
+      Out << VTy->getNumElements() << "(";
+      Out << "convert_char" << VTy->getNumElements() << "(";
+      Out << "condition";
+      Out << ")));\n";
     } else {
       Out << "  return condition ? iftrue : ifnot;\n";
     }
