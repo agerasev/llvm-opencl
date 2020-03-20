@@ -108,9 +108,6 @@ class CWriter : public FunctionPass, public InstVisitor<CWriter> {
   USED_HEADERS_FLAG(ConstantFloatTy)
   USED_HEADERS_FLAG(BitCastUnion)
 
-  llvm::SmallSet<CmpInst::Predicate, 26> FCmpOps;
-  void headerUseFCmpOp(CmpInst::Predicate P);
-
   void generateCompilerSpecificCode(raw_ostream &Out, const DataLayout *) const;
 
 public:

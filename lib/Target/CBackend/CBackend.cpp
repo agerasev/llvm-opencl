@@ -76,6 +76,21 @@ enum UnaryOps {
   }
 #endif
 
+// TODO_: Move to header. In general we need to split this enormous file.
+class OutModifier {
+public:
+  size_t last_size;
+  std::string &out;
+  OutModifier(std::string &out) : out(out) {
+    last_size = out.size();
+  }
+  std::string cut_tail() {
+    std::string tail = out.substr(last_size, out.size() - last_size);
+    out.resize(last_size);
+    return tail;
+  }
+};
+
 static bool isEmptyType(Type *Ty) {
   if (StructType *STy = dyn_cast<StructType>(Ty))
     return STy->getNumElements() == 0 ||
@@ -351,41 +366,54 @@ static const std::string getCmpPredicateName(CmpInst::Predicate P) {
   }
 }
 
-static const char *getFCmpImplem(CmpInst::Predicate P) {
+static std::string getCmpImplem(
+  CmpInst::Predicate P,
+  const std::string &l, const std::string &r
+) {
   switch (P) {
   case FCmpInst::FCMP_FALSE:
     return "0";
+  case ICmpInst::ICMP_EQ:
   case FCmpInst::FCMP_OEQ:
-    return "X == Y";
+    return l + " == " + r;
+  case ICmpInst::ICMP_UGT:
+  case ICmpInst::ICMP_SGT:
   case FCmpInst::FCMP_OGT:
-    return "X >  Y";
+    return l + " > " + r;
+  case ICmpInst::ICMP_UGE:
+  case ICmpInst::ICMP_SGE:
   case FCmpInst::FCMP_OGE:
-    return "X >= Y";
+    return l + " >= " + r;
+  case ICmpInst::ICMP_ULT:
+  case ICmpInst::ICMP_SLT:
   case FCmpInst::FCMP_OLT:
-    return "X <  Y";
+    return l + " < " + r;
+  case ICmpInst::ICMP_ULE:
+  case ICmpInst::ICMP_SLE:
   case FCmpInst::FCMP_OLE:
-    return "X <= Y";
+    return l + " <= " + r;
   case FCmpInst::FCMP_ONE:
-    return "X != Y && llvm_fcmp_ord(X, Y);";
+    return l + " != " + r + " && " + getCmpImplem(FCmpInst::FCMP_ORD, l, r);
   case FCmpInst::FCMP_ORD:
-    return "X == X && Y == Y";
+    return l + " == " + l + " && " + r + " == " + r;
   case FCmpInst::FCMP_UNO:
-    return "X != X || Y != Y";
+    return l + " != " + l + " || " + r + " != " + r;
   case FCmpInst::FCMP_UEQ:
-    return "X == Y || llvm_fcmp_uno(X, Y)";
+    return l + " == " + r + " || " + getCmpImplem(FCmpInst::FCMP_UNO, l, r);
   case FCmpInst::FCMP_UGT:
-    return "X >  Y || llvm_fcmp_uno(X, Y)";
-    return "ugt";
+    return l + " > " + r + " || " + getCmpImplem(FCmpInst::FCMP_UNO, l, r);
   case FCmpInst::FCMP_UGE:
-    return "X >= Y || llvm_fcmp_uno(X, Y)";
+    return l + " >= " + r + " || " + getCmpImplem(FCmpInst::FCMP_UNO, l, r);
   case FCmpInst::FCMP_ULT:
-    return "X <  Y || llvm_fcmp_uno(X, Y)";
+    return l + " < " + r + " || " + getCmpImplem(FCmpInst::FCMP_UNO, l, r);
   case FCmpInst::FCMP_ULE:
-    return "X <= Y || llvm_fcmp_uno(X, Y)";
+    return l + " <= " + r + " || " + getCmpImplem(FCmpInst::FCMP_UNO, l, r);
+  case ICmpInst::ICMP_NE:
   case FCmpInst::FCMP_UNE:
-    return "X != Y";
+    return l + " != " + r;
   case FCmpInst::FCMP_TRUE:
     return "1";
+
   default:
 #ifndef NDEBUG
     errs() << "Invalid fcmp predicate!" << P << "\n";
@@ -393,30 +421,6 @@ static const char *getFCmpImplem(CmpInst::Predicate P) {
     // TODO: cwriter_assert
     llvm_unreachable(0);
   }
-}
-
-static void defineFCmpOp(raw_ostream &Out, CmpInst::Predicate const P) {
-  Out << "static int llvm_fcmp_" << getCmpPredicateName(P)
-      << "(double X, double Y) { ";
-  Out << "return " << getFCmpImplem(P) << "; }\n";
-}
-
-void CWriter::headerUseFCmpOp(CmpInst::Predicate P) {
-  switch (P) {
-  case FCmpInst::FCMP_ONE:
-    FCmpOps.insert(CmpInst::FCMP_ORD);
-    break;
-  case FCmpInst::FCMP_UEQ:
-  case FCmpInst::FCMP_UGT:
-  case FCmpInst::FCMP_UGE:
-  case FCmpInst::FCMP_ULT:
-  case FCmpInst::FCMP_ULE:
-    FCmpOps.insert(CmpInst::FCMP_UNO);
-    break;
-  default:
-    break;
-  }
-  FCmpOps.insert(P);
 }
 
 raw_ostream &CWriter::printSimpleType(raw_ostream &Out, Type *Ty,
@@ -908,6 +912,7 @@ void CWriter::printCast(unsigned opc, Type *SrcTy, Type *DstTy) {
   }
 }
 
+// TODO_: Do we need all this functionality for OpenCL?
 // printConstant - The LLVM Constant to C Constant converter.
 void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(CPV)) {
@@ -1068,19 +1073,16 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
     case Instruction::FCmp: {
       Out << '(';
       bool NeedsClosingParens = printConstExprCast(CE);
-      if (CE->getPredicate() == FCmpInst::FCMP_FALSE)
-        Out << "0";
-      else if (CE->getPredicate() == FCmpInst::FCMP_TRUE)
-        Out << "1";
-      else {
-        const auto Pred = (CmpInst::Predicate)CE->getPredicate();
-        headerUseFCmpOp(Pred);
-        Out << "llvm_fcmp_" << getCmpPredicateName(Pred) << "(";
-        printConstant(CE->getOperand(0), ContextCasted);
-        Out << ", ";
-        printConstant(CE->getOperand(1), ContextCasted);
-        Out << ")";
-      }
+
+      const auto Pred = (CmpInst::Predicate)CE->getPredicate();
+      OutModifier mod(Out.str());
+      printConstant(CE->getOperand(0), ContextCasted);
+      Out.str();
+      std::string l = mod.cut_tail();
+      printConstant(CE->getOperand(1), ContextCasted);
+      Out.str();
+      std::string r = mod.cut_tail();
+      Out << "(" + getCmpImplem(Pred, l, r) + ")";
       if (NeedsClosingParens)
         Out << "))";
       Out << ')';
@@ -2080,89 +2082,58 @@ void CWriter::generateHeader(Module &M) {
     // }
     CmpInst::Predicate Pred = it->first;
     bool isSigned = CmpInst::isSigned(Pred);
-    std::string op_str;
-    switch (Pred) {
-    case CmpInst::ICMP_EQ:
-      op_str = "==";
-      break;
-    case CmpInst::ICMP_NE:
-      op_str = "!=";
-      break;
-    case CmpInst::ICMP_ULE:
-    case CmpInst::ICMP_SLE:
-      op_str = "<=";
-      break;
-    case CmpInst::ICMP_UGE:
-    case CmpInst::ICMP_SGE:
-      op_str = ">=";
-      break;
-    case CmpInst::ICMP_ULT:
-    case CmpInst::ICMP_SLT:
-      op_str = "<";
-      break;
-    case CmpInst::ICMP_UGT:
-    case CmpInst::ICMP_SGT:
-      op_str = ">";
-      break;
-    default:
-#ifndef NDEBUG
-      errs() << "Invalid cmp predicate!" << Pred << "\n";
-#endif
-      errorWithMessage("invalid cmp predicate");
-    }
 
     Type *Ty = it->second;
     VectorType *VTy = dyn_cast<VectorType>(Ty);
+    Type *RTy;
     if (VTy) {
       // Vector type
-      unsigned l = VTy->getVectorNumElements();
-      VectorType *RTy =
-        VectorType::get(Type::getInt1Ty(Ty->getContext()), l);
-      Out << "static ";
-      printTypeName(Out, RTy);
-      if (CmpInst::isFPPredicate(Pred)) {
-        FCmpOps.insert(Pred);
-        Out << " llvm_fcmp_";
-      } else
-        Out << " llvm_icmp_";
-      Out << getCmpPredicateName(Pred) << "_";
-      printTypeString(Out, Ty);
-      Out << "(";
-      printTypeName(Out, VTy);
-      Out << " l, ";
-      printTypeName(Out, VTy);
-      Out << " r) {\n  ";
-      Out << " return convert_";
-      printTypeName(Out, RTy);
-      Out << "(convert_";
-      printTypeName(Out, VTy, isSigned);
-      Out << "(l) " << op_str << " convert_";
-      printTypeName(Out, VTy, isSigned);
-      Out << "(r));\n}\n";
+      RTy = VectorType::get(
+        Type::getInt1Ty(VTy->getContext()),
+        VTy->getVectorNumElements()
+      );
     } else {
       // Scalar type
-      if (CmpInst::isFPPredicate(Pred)) {
-        return;
-      }
-      Type *RTy = Type::getInt1Ty(Ty->getContext());
-      Out << "static ";
-      printTypeName(Out, RTy);
-      Out << " llvm_icmp_";
-      Out << getCmpPredicateName(Pred) << "_";
-      printTypeString(Out, Ty);
-      Out << "(";
-      printTypeName(Out, Ty);
-      Out << " l, ";
-      printTypeName(Out, Ty);
-      Out << " r) {\n  ";
-      Out << " return (";
-      printTypeName(Out, RTy);
-      Out << ")((";
-      printTypeName(Out, Ty, isSigned);
-      Out << ")l " << op_str << " (";
-      printTypeName(Out, Ty, isSigned);
-      Out << ")r);\n}\n";
+      RTy = Type::getInt1Ty(Ty->getContext());
     }
+
+    Out << "static ";
+    printTypeName(Out, RTy);
+    if (CmpInst::isFPPredicate(Pred))
+      Out << " llvm_fcmp_";
+    else
+      Out << " llvm_icmp_";
+    Out << getCmpPredicateName(Pred) << "_";
+    printTypeString(Out, Ty);
+    Out << "(";
+    printTypeName(Out, Ty);
+    Out << " l, ";
+    printTypeName(Out, Ty);
+    Out << " r) {\n";
+    
+    std::string stype;
+    {
+      raw_string_ostream lout(stype);
+      printTypeName(lout, Ty, isSigned);
+      lout.str();
+    }
+
+    if (VTy) {
+      // Vector type
+      Out << "  " + stype + " sl = convert_" + stype + "(l);\n";
+      Out << "  " + stype + " sr = convert_" + stype + "(r);\n";
+      Out << "  return convert_";
+      printTypeName(Out, RTy);
+      Out << "(" + getCmpImplem(Pred, "sl", "sr") + ");";
+    } else {
+      // Scalar type
+      Out << "  " + stype + " sl = (" + stype + ")l;\n";
+      Out << "  " + stype + " sr = (" + stype + ")r;\n";
+      Out << "  return (";
+      printTypeName(Out, RTy);
+      Out << ")(" + getCmpImplem(Pred, "sl", "sr") + ");";
+    }
+    Out << "\n}\n";
   }
 
   // TODO: Test cast
@@ -2420,17 +2391,6 @@ void CWriter::generateHeader(Module &M) {
     Out << "\n\n/* Function Bodies */\n";
 
   generateCompilerSpecificCode(OutHeaders, TD);
-
-  if (FCmpOps.erase(FCmpInst::FCMP_ORD)) {
-    defineFCmpOp(OutHeaders, FCmpInst::FCMP_ORD);
-  }
-  if (FCmpOps.erase(FCmpInst::FCMP_UNO)) {
-    defineFCmpOp(OutHeaders, FCmpInst::FCMP_UNO);
-  }
-  for (auto Pred : FCmpOps) {
-    defineFCmpOp(OutHeaders, Pred);
-  }
-  FCmpOps.clear();
 }
 
 void CWriter::declareOneGlobalVariable(GlobalVariable *I) {
@@ -3161,44 +3121,34 @@ void CWriter::visitICmpInst(ICmpInst &I) {
   Out << ", ";
   writeOperand(I.getOperand(1), ContextCasted);
   Out << ")";
+
   CmpDeclTypes.insert(
       std::pair<CmpInst::Predicate, Type *>(I.getPredicate(), I.getOperand(0)->getType()));
+
   if (VectorType *VTy = dyn_cast<VectorType>(I.getOperand(0)->getType())) {
     TypedefDeclTypes.insert(
         I.getType()); // insert type not necessarily visible above
   }
-  return;
 }
 
 void CWriter::visitFCmpInst(FCmpInst &I) {
   CurInstr = &I;
 
-  if (I.getType()->isVectorTy()) {
-    Out << "llvm_fcmp_" << getCmpPredicateName(I.getPredicate()) << "_";
-    printTypeString(Out, I.getOperand(0)->getType());
-    Out << "(";
-    writeOperand(I.getOperand(0), ContextCasted);
-    Out << ", ";
-    writeOperand(I.getOperand(1), ContextCasted);
-    Out << ")";
-    if (VectorType *VTy = dyn_cast<VectorType>(I.getOperand(0)->getType())) {
-      CmpDeclTypes.insert(
-          std::pair<CmpInst::Predicate, VectorType *>(I.getPredicate(), VTy));
-      TypedefDeclTypes.insert(
-          I.getType()); // insert type not necessarily visible above
-    }
-    return;
-  }
-
-  const auto Pred = I.getPredicate();
-  headerUseFCmpOp(Pred);
-  Out << "llvm_fcmp_" << getCmpPredicateName(Pred) << "(";
-  // Write the first operand
+  Out << "llvm_fcmp_" << getCmpPredicateName(I.getPredicate()) << "_";
+  printTypeString(Out, I.getOperand(0)->getType());
+  Out << "(";
   writeOperand(I.getOperand(0), ContextCasted);
   Out << ", ";
-  // Write the second operand
   writeOperand(I.getOperand(1), ContextCasted);
   Out << ")";
+
+  CmpDeclTypes.insert(
+      std::pair<CmpInst::Predicate, Type *>(I.getPredicate(), I.getOperand(0)->getType()));
+
+  if (VectorType *VTy = dyn_cast<VectorType>(I.getOperand(0)->getType())) {
+    TypedefDeclTypes.insert(
+        I.getType()); // insert type not necessarily visible above
+  }
 }
 
 static const char *getFloatBitCastField(Type *Ty) {
@@ -4035,21 +3985,6 @@ void CWriter::visitVAArgInst(VAArgInst &I) {
   printTypeName(Out, I.getType());
   Out << ");\n ";
 }
-
-// TODO_: Move to header. In general we need to split this enormous file.
-class OutModifier {
-public:
-  size_t last_size;
-  std::string &out;
-  OutModifier(std::string &out) : out(out) {
-    last_size = out.size();
-  }
-  std::string cut_tail() {
-    std::string tail = out.substr(last_size, out.size() - last_size);
-    out.resize(last_size);
-    return tail;
-  }
-};
 
 void CWriter::visitInsertElementInst(InsertElementInst &I) {
   CurInstr = &I;
