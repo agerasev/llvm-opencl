@@ -176,8 +176,7 @@ static std::string CBEMangle(const std::string &S) {
   return Result;
 }
 
-raw_ostream &CWriter::printTypeString(raw_ostream &Out, Type *Ty,
-                                      bool isSigned) {
+raw_ostream &CWriter::printTypeString(raw_ostream &Out, Type *Ty) {
   if (StructType *ST = dyn_cast<StructType>(Ty)) {
     cwriter_assert(!isEmptyType(ST));
     TypedefDeclTypes.insert(Ty);
@@ -191,7 +190,7 @@ raw_ostream &CWriter::printTypeString(raw_ostream &Out, Type *Ty,
 
   if (Ty->isPointerTy()) {
     Out << "p";
-    return printTypeString(Out, Ty->getPointerElementType(), isSigned);
+    return printTypeString(Out, Ty->getPointerElementType());
   }
 
   switch (Ty->getTypeID()) {
@@ -199,12 +198,8 @@ raw_ostream &CWriter::printTypeString(raw_ostream &Out, Type *Ty,
     return Out << "void";
   case Type::IntegerTyID: {
     unsigned NumBits = cast<IntegerType>(Ty)->getBitWidth();
-    if (NumBits == 1)
-      return Out << "bool";
-    else {
-      cwriter_assert(NumBits <= 128 && "Bit widths > 128 not implemented yet");
-      return Out << (isSigned ? "i" : "u") << NumBits;
-    }
+    cwriter_assert(NumBits <= 64 && "Bit widths > 64 not implemented yet");
+    return Out << "i" << NumBits;
   }
   case Type::FloatTyID:
     return Out << "f32";
@@ -215,7 +210,7 @@ raw_ostream &CWriter::printTypeString(raw_ostream &Out, Type *Ty,
     TypedefDeclTypes.insert(Ty);
     VectorType *VTy = cast<VectorType>(Ty);
     cwriter_assert(VTy->getNumElements() != 0);
-    printTypeString(Out, VTy->getElementType(), isSigned);
+    printTypeString(Out, VTy->getElementType());
     return Out << "x" << VTy->getNumElements();
   }
 
@@ -223,7 +218,7 @@ raw_ostream &CWriter::printTypeString(raw_ostream &Out, Type *Ty,
     TypedefDeclTypes.insert(Ty);
     ArrayType *ATy = cast<ArrayType>(Ty);
     cwriter_assert(ATy->getNumElements() != 0);
-    printTypeString(Out, ATy->getElementType(), isSigned);
+    printTypeString(Out, ATy->getElementType());
     return Out << "a" << ATy->getNumElements();
   }
 
@@ -257,7 +252,7 @@ std::string CWriter::getArrayName(ArrayType *AT) {
   // Arrays are wrapped in structs to allow them to have normal
   // value semantics (avoiding the array "decay").
   cwriter_assert(!isEmptyType(AT));
-  printTypeName(ArrayInnards, AT->getElementType(), false);
+  printTypeName(ArrayInnards, AT->getElementType());
   return "struct l_array_" + utostr(AT->getNumElements()) + '_' +
          CBEMangle(ArrayInnards.str());
 }
@@ -503,7 +498,7 @@ CWriter::printTypeName(raw_ostream &Out, Type *Ty, bool isSigned,
       errorWithMessage("Encountered Invalid Address Space");
       break;
     }
-    return printTypeName(Out, ElTy, false) << '*';
+    return printTypeName(Out, ElTy) << '*';
   }
 
   case Type::ArrayTyID: {
@@ -524,15 +519,6 @@ CWriter::printTypeName(raw_ostream &Out, Type *Ty, bool isSigned,
   }
 }
 
-// TODO_: Remove
-raw_ostream &CWriter::printTypeNameUnaligned(raw_ostream &Out, Type *Ty,
-                                             bool isSigned) {
-  if (VectorType *VTy = dyn_cast<VectorType>(Ty)) {
-    return Out << getVectorName(VTy, false, isSigned);
-  }
-  return printTypeName(Out, Ty, isSigned);
-}
-
 raw_ostream &CWriter::printStructDeclaration(raw_ostream &Out,
                                              StructType *STy) {
   Out << getStructName(STy) << " {\n";
@@ -544,7 +530,7 @@ raw_ostream &CWriter::printStructDeclaration(raw_ostream &Out,
     bool empty = isEmptyType(*I);
     if (empty)
       Out << "/* "; // skip zero-sized types
-    printTypeName(Out, *I, false) << " field" << utostr(Idx);
+    printTypeName(Out, *I) << " field" << utostr(Idx);
     if (empty)
       Out << " */"; // skip zero-sized types
     else
@@ -628,7 +614,7 @@ CWriter::printFunctionProto(raw_ostream &Out, FunctionType *FTy,
     }
     if (PrintedArg)
       Out << ", ";
-    printTypeNameUnaligned(Out, ArgTy,
+    printTypeName(Out, ArgTy,
                            /*isSigned=*/PAL.hasAttribute(Idx, Attribute::SExt));
     PrintedArg = true;
     ++Idx;
@@ -1113,7 +1099,7 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
       cwriter_assert(!isEmptyType(VT));
       CtorDeclTypes.insert(VT);
       Out << "/*undef*/llvm_ctor_";
-      printTypeString(Out, VT, false);
+      printTypeString(Out, VT);
       Out << "(";
       Constant *Zero = Constant::getNullValue(VT->getElementType());
       unsigned NumElts = VT->getNumElements();
@@ -1222,7 +1208,7 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
     if (Context != ContextStatic) {
       CtorDeclTypes.insert(AT);
       Out << "llvm_ctor_";
-      printTypeString(Out, AT, false);
+      printTypeString(Out, AT);
       Out << "(";
       Context = ContextCasted;
     } else {
@@ -1254,7 +1240,7 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
     if (Context != ContextStatic) {
       CtorDeclTypes.insert(VT);
       Out << "llvm_ctor_";
-      printTypeString(Out, VT, false);
+      printTypeString(Out, VT);
       Out << "(";
       Context = ContextCasted;
     } else {
@@ -1284,7 +1270,7 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
     if (Context != ContextStatic) {
       CtorDeclTypes.insert(ST);
       Out << "llvm_ctor_";
-      printTypeString(Out, ST, false);
+      printTypeString(Out, ST);
       Out << "(";
       Context = ContextCasted;
     } else {
@@ -1330,7 +1316,7 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
       writeOperand(GV);
       break;
     }
-    // FALL THROUGH
+  LLVM_FALLTHROUGH;
   default:
 #ifndef NDEBUG
     errs() << "Unknown constant type: " << *CPV << "\n";
@@ -1728,6 +1714,7 @@ static SpecialGlobalClass getGlobalVariableClass(GlobalVariable *GV) {
   return NotSpecial;
 }
 
+/*
 // PrintEscapedString - Print each character of the specified string, escaping
 // it if it is not printable or if it is an escape char.
 static void PrintEscapedString(const char *Str, unsigned Length,
@@ -1752,6 +1739,7 @@ static void PrintEscapedString(const char *Str, unsigned Length,
 static void PrintEscapedString(const std::string &Str, raw_ostream &Out) {
   PrintEscapedString(Str.c_str(), Str.size(), Out);
 }
+*/
 
 // generateCompilerSpecificCode - This is where we add conditional compilation
 // directives to cater to specific compilers as need be.
@@ -2029,12 +2017,12 @@ void CWriter::generateHeader(Module &M) {
     //   return convert_<u8 x 4>(condition) ? iftrue : ifnot;
     // }
     Out << "static ";
-    printTypeNameUnaligned(Out, *it, false);
+    printTypeName(Out, *it, false);
     Out << " llvm_select_";
-    printTypeString(Out, *it, false);
+    printTypeString(Out, *it);
     Out << "(";
     if (isa<VectorType>(*it))
-      printTypeNameUnaligned(
+      printTypeName(
           Out,
           VectorType::get(Type::getInt1Ty((*it)->getContext()),
                           (*it)->getVectorNumElements()),
@@ -2043,9 +2031,9 @@ void CWriter::generateHeader(Module &M) {
       //Out << "bool";
       Out << "uchar";
     Out << " condition, ";
-    printTypeNameUnaligned(Out, *it, false);
+    printTypeName(Out, *it, false);
     Out << " iftrue, ";
-    printTypeNameUnaligned(Out, *it, false);
+    printTypeName(Out, *it, false);
     Out << " ifnot) {\n  ";
     VectorType *VTy = dyn_cast<VectorType>(*it);
     if (VTy) {
@@ -2064,7 +2052,7 @@ void CWriter::generateHeader(Module &M) {
       default:
 #ifndef NDEBUG
         errs() << "Unknown vector element type: ";
-        printTypeNameUnaligned(errs(), ElTy, true);
+        printTypeName(errs(), ElTy, true);
         errs() << "\n";
 #endif
         errorWithMessage("Unknown vector element type");
@@ -2097,11 +2085,11 @@ void CWriter::generateHeader(Module &M) {
     } else
       Out << " llvm_icmp_";
     Out << getCmpPredicateName(Pred) << "_";
-    printTypeString(Out, (*it).second, isSigned);
+    printTypeString(Out, (*it).second);
     Out << "(";
-    printTypeNameUnaligned(Out, (*it).second);
+    printTypeName(Out, (*it).second);
     Out << " l, ";
-    printTypeNameUnaligned(Out, (*it).second);
+    printTypeName(Out, (*it).second);
     Out << " r) {\n  ";
     Out << " return convert_";
     printTypeName(Out, RTy);
@@ -2188,11 +2176,11 @@ void CWriter::generateHeader(Module &M) {
     Out << "static ";
     printTypeName(Out, DstTy, false);
     Out << " llvm_" << Instruction::getOpcodeName(opcode) << "_";
-    printTypeString(Out, SrcTy, false);
+    printTypeString(Out, SrcTy);
     Out << "_";
-    printTypeString(Out, DstTy, false);
+    printTypeString(Out, DstTy);
     Out << "(";
-    printTypeNameUnaligned(Out, SrcTy, false);
+    printTypeName(Out, SrcTy, false);
     Out << " in) {\n";
     if (opcode == Instruction::BitCast) {
       Out << "  union {\n    ";
@@ -2235,23 +2223,23 @@ void CWriter::generateHeader(Module &M) {
     Out << " ";
     if (opcode == BinaryNeg) {
       Out << "llvm_neg_";
-      printTypeString(Out, OpTy, false);
+      printTypeString(Out, OpTy);
       Out << "(";
-      printTypeNameUnaligned(Out, OpTy, isSigned);
+      printTypeName(Out, OpTy, isSigned);
       Out << " a)";
     } else if (opcode == BinaryNot) {
       Out << "llvm_not_";
-      printTypeString(Out, OpTy, false);
+      printTypeString(Out, OpTy);
       Out << "(";
-      printTypeNameUnaligned(Out, OpTy, isSigned);
+      printTypeName(Out, OpTy, isSigned);
       Out << " a)";
     } else {
       Out << "llvm_" << Instruction::getOpcodeName(opcode) << "_";
-      printTypeString(Out, OpTy, false);
+      printTypeString(Out, OpTy);
       Out << "(";
-      printTypeNameUnaligned(Out, OpTy, isSigned);
+      printTypeName(Out, OpTy, isSigned);
       Out << " a, ";
-      printTypeNameUnaligned(Out, OpTy, isSigned);
+      printTypeName(Out, OpTy, isSigned);
       Out << " b)";
     }
 
@@ -2325,7 +2313,7 @@ void CWriter::generateHeader(Module &M) {
     Out << "static ";
     printTypeName(Out, *it);
     Out << " llvm_ctor_";
-    printTypeString(Out, *it, false);
+    printTypeString(Out, *it);
     Out << "(";
     StructType *STy = dyn_cast<StructType>(*it);
     ArrayType *ATy = dyn_cast<ArrayType>(*it);
@@ -2340,7 +2328,7 @@ void CWriter::generateHeader(Module &M) {
         Out << " /* ";
       else if (printed)
         Out << ", ";
-      printTypeNameUnaligned(Out, ElTy);
+      printTypeName(Out, ElTy);
       Out << " x" << i;
       if (isEmptyType(ElTy))
         Out << " */";
@@ -3015,25 +3003,25 @@ void CWriter::visitBinaryOperator(BinaryOperator &I) {
     if (match(&I, m_Neg(m_Value(X)))) {
       opcode = BinaryNeg;
       Out << "llvm_neg_";
-      printTypeString(Out, VTy, false);
+      printTypeString(Out, VTy);
       Out << "(";
       writeOperand(X, ContextCasted);
     } else if (match(&I, m_FNeg(m_Value(X)))) {
       opcode = BinaryNeg;
       Out << "llvm_neg_";
-      printTypeString(Out, VTy, false);
+      printTypeString(Out, VTy);
       Out << "(";
       writeOperand(X, ContextCasted);
     } else if (match(&I, m_Not(m_Value(X)))) {
       opcode = BinaryNot;
       Out << "llvm_not_";
-      printTypeString(Out, VTy, false);
+      printTypeString(Out, VTy);
       Out << "(";
       writeOperand(X, ContextCasted);
     } else {
       opcode = I.getOpcode();
       Out << "llvm_" << Instruction::getOpcodeName(opcode) << "_";
-      printTypeString(Out, VTy, false);
+      printTypeString(Out, VTy);
       Out << "(";
       writeOperand(I.getOperand(0), ContextCasted);
       Out << ", ";
@@ -3140,7 +3128,7 @@ void CWriter::visitICmpInst(ICmpInst &I) {
   if (I.getType()->isVectorTy() ||
       I.getOperand(0)->getType()->getPrimitiveSizeInBits() > 64) {
     Out << "llvm_icmp_" << getCmpPredicateName(I.getPredicate()) << "_";
-    printTypeString(Out, I.getOperand(0)->getType(), I.isSigned());
+    printTypeString(Out, I.getOperand(0)->getType());
     Out << "(";
     writeOperand(I.getOperand(0), ContextCasted);
     Out << ", ";
@@ -3204,7 +3192,7 @@ void CWriter::visitFCmpInst(FCmpInst &I) {
 
   if (I.getType()->isVectorTy()) {
     Out << "llvm_fcmp_" << getCmpPredicateName(I.getPredicate()) << "_";
-    printTypeString(Out, I.getOperand(0)->getType(), I.isSigned());
+    printTypeString(Out, I.getOperand(0)->getType());
     Out << "(";
     writeOperand(I.getOperand(0), ContextCasted);
     Out << ", ";
@@ -3258,9 +3246,9 @@ void CWriter::visitCastInst(CastInst &I) {
       DstTy->getPrimitiveSizeInBits() > 64 ||
       SrcTy->getPrimitiveSizeInBits() > 64) {
     Out << "llvm_" << I.getOpcodeName() << "_";
-    printTypeString(Out, SrcTy, false);
+    printTypeString(Out, SrcTy);
     Out << "_";
-    printTypeString(Out, DstTy, false);
+    printTypeString(Out, DstTy);
     Out << "(";
     writeOperand(I.getOperand(0), ContextCasted);
     Out << ")";
@@ -3307,7 +3295,7 @@ void CWriter::visitSelectInst(SelectInst &I) {
   CurInstr = &I;
 
   Out << "llvm_select_";
-  printTypeString(Out, I.getType(), false);
+  printTypeString(Out, I.getType());
   Out << "(";
   writeOperand(I.getCondition(), ContextCasted);
   Out << ", ";
@@ -3409,7 +3397,7 @@ void CWriter::printIntrinsicDefinition(FunctionType *funT, unsigned Opcode,
     case Intrinsic::powi:
       break;
     }
-    printTypeNameUnaligned(Out, funT->getParamType(i), isSigned);
+    printTypeName(Out, funT->getParamType(i), isSigned);
     Out << " " << (char)('a' + i);
     if (i != numParams - 1)
       Out << ", ";
@@ -3781,7 +3769,7 @@ void CWriter::visitCallInst(CallInst &I) {
     if (ArgNo < NumDeclaredParams &&
         (*AI)->getType() != FTy->getParamType(ArgNo)) {
       Out << '(';
-      printTypeNameUnaligned(
+      printTypeName(
           Out, FTy->getParamType(ArgNo),
           /*isSigned=*/PAL.hasAttribute(ArgNo + 1, Attribute::SExt));
       Out << ')';
@@ -3981,7 +3969,7 @@ void CWriter::writeMemoryAccess(Value *Operand, Type *OperandType,
   } else if (IsUnaligned) {
     headerUseUnalignedLoad();
     Out << "__UNALIGNED_LOAD__(";
-    printTypeNameUnaligned(Out, OperandType, false);
+    printTypeName(Out, OperandType, false);
     if (IsVolatile)
       Out << " volatile";
     Out << ", " << Alignment << ", ";
@@ -4041,8 +4029,10 @@ void CWriter::visitFenceInst(FenceInst &I) {
   case AtomicOrdering::Monotonic:
     Out << "__ATOMIC_RELAXED";
     break;
+  /*
   default:
     errorWithMessage("Unhandled atomic ordering for fence instruction");
+  */
   }
   Out << ");\n";
 }
@@ -4152,7 +4142,7 @@ void CWriter::visitShuffleVectorInst(ShuffleVectorInst &SVI) {
 
   CtorDeclTypes.insert(VT);
   Out << "llvm_ctor_";
-  printTypeString(Out, VT, false);
+  printTypeString(Out, VT);
   Out << "(";
 
   Constant *Zero = Constant::getNullValue(EltTy);
