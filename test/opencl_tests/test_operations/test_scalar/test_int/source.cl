@@ -59,9 +59,6 @@ __kernel void kernel_main(
 ) {
     int i = get_global_id(0);
 
-    plus[i] = +a[i];
-    minus[i] = -a[i];
-
     // Unary
     plus[i] = +a[i];
     minus[i] = -a[i];

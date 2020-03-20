@@ -74,7 +74,7 @@ class CWriter : public FunctionPass, public InstVisitor<CWriter> {
 
   std::set<Type *> TypedefDeclTypes;
   std::set<Type *> SelectDeclTypes;
-  std::set<std::pair<CmpInst::Predicate, VectorType *>> CmpDeclTypes;
+  std::set<std::pair<CmpInst::Predicate, Type *>> CmpDeclTypes;
   std::set<std::pair<CastInst::CastOps, std::pair<Type *, Type *>>>
       CastOpDeclTypes;
   std::set<std::pair<unsigned, Type *>> InlineOpDeclTypes;

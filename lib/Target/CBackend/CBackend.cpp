@@ -107,6 +107,9 @@ bool CWriter::isAddressExposed(Value *V) const {
 // what is acceptable to inline, so that variable declarations don't get
 // printed and an extra copy of the expr is not emitted.
 bool CWriter::isInlinableInst(Instruction &I) const {
+  // TODO_: For now we inline nothing, but need to consider is it reasonable
+  return false;
+
   // Always inline cmp instructions, even if they are shared by multiple
   // expressions.  GCC generates horrible code if we don't.
   if (isa<CmpInst>(I))
@@ -2068,69 +2071,98 @@ void CWriter::generateHeader(Module &M) {
   }
 
   // Loop over all compare operations
-  for (std::set<std::pair<CmpInst::Predicate, VectorType *>>::iterator
+  for (std::set<std::pair<CmpInst::Predicate, Type *>>::iterator
            it = CmpDeclTypes.begin(),
            end = CmpDeclTypes.end();
        it != end; ++it) {
     // static <bool x 4> llvm_icmp_ge_u8x4(<u8 x 4> l, <u8 x 4> r) {
     //   return l >= r;
     // }
-    unsigned l = (*it).second->getVectorNumElements();
-    VectorType *RTy =
-        VectorType::get(Type::getInt1Ty((*it).second->getContext()), l);
-    bool isSigned = CmpInst::isSigned((*it).first);
-    Out << "static ";
-    printTypeName(Out, RTy);
-    const auto Pred = (*it).first;
-    if (CmpInst::isFPPredicate((*it).first)) {
-      FCmpOps.insert(Pred);
-      Out << " llvm_fcmp_";
-    } else
-      Out << " llvm_icmp_";
-    Out << getCmpPredicateName(Pred) << "_";
-    printTypeString(Out, (*it).second);
-    Out << "(";
-    printTypeName(Out, (*it).second);
-    Out << " l, ";
-    printTypeName(Out, (*it).second);
-    Out << " r) {\n  ";
-    Out << " return convert_";
-    printTypeName(Out, RTy);
-    Out << "(convert_";
-    printTypeName(Out, (*it).second, isSigned);
-    Out << "(l) ";
-    switch ((*it).first) {
+    CmpInst::Predicate Pred = it->first;
+    bool isSigned = CmpInst::isSigned(Pred);
+    std::string op_str;
+    switch (Pred) {
     case CmpInst::ICMP_EQ:
-      Out << "==";
+      op_str = "==";
       break;
     case CmpInst::ICMP_NE:
-      Out << "!=";
+      op_str = "!=";
       break;
     case CmpInst::ICMP_ULE:
     case CmpInst::ICMP_SLE:
-      Out << "<=";
+      op_str = "<=";
       break;
     case CmpInst::ICMP_UGE:
     case CmpInst::ICMP_SGE:
-      Out << ">=";
+      op_str = ">=";
       break;
     case CmpInst::ICMP_ULT:
     case CmpInst::ICMP_SLT:
-      Out << "<";
+      op_str = "<";
       break;
     case CmpInst::ICMP_UGT:
     case CmpInst::ICMP_SGT:
-      Out << ">";
+      op_str = ">";
       break;
     default:
 #ifndef NDEBUG
-      errs() << "Invalid cmp predicate!" << (*it).first << "\n";
+      errs() << "Invalid cmp predicate!" << Pred << "\n";
 #endif
       errorWithMessage("invalid cmp predicate");
     }
-    Out << " convert_";
-    printTypeName(Out, (*it).second, isSigned);
-    Out << "(r));\n}\n";
+
+    Type *Ty = it->second;
+    VectorType *VTy = dyn_cast<VectorType>(Ty);
+    if (VTy) {
+      // Vector type
+      unsigned l = VTy->getVectorNumElements();
+      VectorType *RTy =
+        VectorType::get(Type::getInt1Ty(Ty->getContext()), l);
+      Out << "static ";
+      printTypeName(Out, RTy);
+      if (CmpInst::isFPPredicate(Pred)) {
+        FCmpOps.insert(Pred);
+        Out << " llvm_fcmp_";
+      } else
+        Out << " llvm_icmp_";
+      Out << getCmpPredicateName(Pred) << "_";
+      printTypeString(Out, Ty);
+      Out << "(";
+      printTypeName(Out, VTy);
+      Out << " l, ";
+      printTypeName(Out, VTy);
+      Out << " r) {\n  ";
+      Out << " return convert_";
+      printTypeName(Out, RTy);
+      Out << "(convert_";
+      printTypeName(Out, VTy, isSigned);
+      Out << "(l) " << op_str << " convert_";
+      printTypeName(Out, VTy, isSigned);
+      Out << "(r));\n}\n";
+    } else {
+      // Scalar type
+      if (CmpInst::isFPPredicate(Pred)) {
+        return;
+      }
+      Type *RTy = Type::getInt1Ty(Ty->getContext());
+      Out << "static ";
+      printTypeName(Out, RTy);
+      Out << " llvm_icmp_";
+      Out << getCmpPredicateName(Pred) << "_";
+      printTypeString(Out, Ty);
+      Out << "(";
+      printTypeName(Out, Ty);
+      Out << " l, ";
+      printTypeName(Out, Ty);
+      Out << " r) {\n  ";
+      Out << " return (";
+      printTypeName(Out, RTy);
+      Out << ")((";
+      printTypeName(Out, Ty, isSigned);
+      Out << ")l " << op_str << " (";
+      printTypeName(Out, Ty, isSigned);
+      Out << ")r);\n}\n";
+    }
   }
 
   // TODO: Test cast
@@ -3003,13 +3035,7 @@ void CWriter::visitBinaryOperator(BinaryOperator &I) {
     Type *VTy = I.getOperand(0)->getType();
     unsigned opcode;
     Value *X;
-    if (match(&I, m_Neg(m_Value(X)))) {
-      opcode = BinaryNeg;
-      Out << "llvm_neg_";
-      printTypeString(Out, VTy);
-      Out << "(";
-      writeOperand(X, ContextCasted);
-    } else if (match(&I, m_FNeg(m_Value(X)))) {
+    if (match(&I, m_Neg(m_Value(X))) || match(&I, m_FNeg(m_Value(X)))) {
       opcode = BinaryNeg;
       Out << "llvm_neg_";
       printTypeString(Out, VTy);
@@ -3128,66 +3154,20 @@ void CWriter::visitBinaryOperator(BinaryOperator &I) {
 void CWriter::visitICmpInst(ICmpInst &I) {
   CurInstr = &I;
 
-  if (I.getType()->isVectorTy() ||
-      I.getOperand(0)->getType()->getPrimitiveSizeInBits() > 64) {
-    Out << "llvm_icmp_" << getCmpPredicateName(I.getPredicate()) << "_";
-    printTypeString(Out, I.getOperand(0)->getType());
-    Out << "(";
-    writeOperand(I.getOperand(0), ContextCasted);
-    Out << ", ";
-    writeOperand(I.getOperand(1), ContextCasted);
-    Out << ")";
-    if (VectorType *VTy = dyn_cast<VectorType>(I.getOperand(0)->getType())) {
-      CmpDeclTypes.insert(
-          std::pair<CmpInst::Predicate, VectorType *>(I.getPredicate(), VTy));
-      TypedefDeclTypes.insert(
-          I.getType()); // insert type not necessarily visible above
-    }
-    return;
+  Out << "llvm_icmp_" << getCmpPredicateName(I.getPredicate()) << "_";
+  printTypeString(Out, I.getOperand(0)->getType());
+  Out << "(";
+  writeOperand(I.getOperand(0), ContextCasted);
+  Out << ", ";
+  writeOperand(I.getOperand(1), ContextCasted);
+  Out << ")";
+  CmpDeclTypes.insert(
+      std::pair<CmpInst::Predicate, Type *>(I.getPredicate(), I.getOperand(0)->getType()));
+  if (VectorType *VTy = dyn_cast<VectorType>(I.getOperand(0)->getType())) {
+    TypedefDeclTypes.insert(
+        I.getType()); // insert type not necessarily visible above
   }
-
-  // Write out the cast of the instruction's value back to the proper type
-  // if necessary.
-  bool NeedsClosingParens = writeInstructionCast(I);
-
-  // Certain icmp predicate require the operand to be forced to a specific type
-  // so we use writeOperandWithCast here instead of writeOperand. Similarly
-  // below for operand 1
-  writeOperandWithCast(I.getOperand(0), I);
-
-  switch (I.getPredicate()) {
-  case ICmpInst::ICMP_EQ:
-    Out << " == ";
-    break;
-  case ICmpInst::ICMP_NE:
-    Out << " != ";
-    break;
-  case ICmpInst::ICMP_ULE:
-  case ICmpInst::ICMP_SLE:
-    Out << " <= ";
-    break;
-  case ICmpInst::ICMP_UGE:
-  case ICmpInst::ICMP_SGE:
-    Out << " >= ";
-    break;
-  case ICmpInst::ICMP_ULT:
-  case ICmpInst::ICMP_SLT:
-    Out << " < ";
-    break;
-  case ICmpInst::ICMP_UGT:
-  case ICmpInst::ICMP_SGT:
-    Out << " > ";
-    break;
-  default:
-#ifndef NDEBUG
-    errs() << "Invalid icmp predicate!" << I << "\n";
-#endif
-    errorWithMessage("invalid icmp predicate");
-  }
-
-  writeOperandWithCast(I.getOperand(1), I);
-  if (NeedsClosingParens)
-    Out << "))";
+  return;
 }
 
 void CWriter::visitFCmpInst(FCmpInst &I) {
