@@ -2,16 +2,13 @@
 
 import numpy as np
 import pyopencl as cl
-from pyopencl import cltypes
+import pyopencl.cltypes
 
 from opencl import Mem, run_kernel
 
-
 def run(ctx, src):
     n = 64
-    #b = np.arange(4*n, dtype=cltypes.float)/(2*n**0.5)
-    b = np.arange(4*n, dtype=cltypes.uint) - (4*n)//2
-    a = np.zeros(4*n, dtype=cltypes.int)
+    a = np.arange(5*n, dtype=cl.cltypes.int)
+    b = np.arange(n, dtype=cl.cltypes.int)
     run_kernel(ctx, src, (n,), *[Mem(x) for x in [a, b]])
-    #print(a, b)
     return (a, b)

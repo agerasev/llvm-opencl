@@ -173,7 +173,7 @@ private:
                                   std::make_pair(AttributeList(),
                                                  CallingConv::C));
   std::string getArrayName(ArrayType *AT);
-  std::string getVectorName(VectorType *VT, bool Aligned);
+  std::string getVectorName(VectorType *VT, bool Aligned, bool isSigned=false);
 
   raw_ostream &printVectorComponent(raw_ostream &Out, uint64_t i);
   raw_ostream &printVectorShuffled(raw_ostream &Out, const std::vector<uint64_t> &mask);

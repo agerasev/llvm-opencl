@@ -64,7 +64,8 @@ if __name__ == "__main__":
         exit()
 
 
-    args.tests = [os.path.split(p) for p in args.tests]
+    args.tests = [p.split(".") for p in args.tests]
+    os.environ["PYOPENCL_COMPILER_OUTPUT"] = "1"
 
     if args.platform < 0:
         ctx = cl.create_some_context()
@@ -91,7 +92,6 @@ if __name__ == "__main__":
 
         modpath = ".".join(dirlist)
         try:
-            #print(modpath)
             module = importlib.import_module(modpath)
             if not hasattr(module, "run"):
                 assert any([d.startswith("test_") for d in dirnames])

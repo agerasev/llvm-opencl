@@ -262,7 +262,7 @@ std::string CWriter::getArrayName(ArrayType *AT) {
          CBEMangle(ArrayInnards.str());
 }
 
-std::string CWriter::getVectorName(VectorType *VT, bool Aligned) {
+std::string CWriter::getVectorName(VectorType *VT, bool Aligned, bool isSigned) {
   std::string astr;
   raw_string_ostream VectorInnards(astr);
   // Vectors are handled like arrays
@@ -276,7 +276,7 @@ std::string CWriter::getVectorName(VectorType *VT, bool Aligned) {
     errorWithMessage("Unsupported vector length");
   }
 
-  printTypeName(VectorInnards, VT->getElementType(), false);
+  printTypeName(VectorInnards, VT->getElementType(), isSigned);
   std::string t = CBEMangle(VectorInnards.str());
   if (t != "char" && t != "uchar" && t != "short" && t != "ushort" &&
       t != "int" && t != "uint" && t != "long" && t != "ulong" &&
@@ -431,7 +431,9 @@ raw_ostream &CWriter::printSimpleType(raw_ostream &Out, Type *Ty,
   case Type::IntegerTyID: {
     unsigned NumBits = cast<IntegerType>(Ty)->getBitWidth();
     if (NumBits == 1)
-      return Out << "bool";
+      //return Out << "bool";
+      // OpenCL has no support for bool vectors
+      return Out << (isSigned ? "char" : "uchar");
     else if (NumBits <= 8)
       return Out << (isSigned ? "char" : "uchar");
     else if (NumBits <= 16)
@@ -511,7 +513,7 @@ CWriter::printTypeName(raw_ostream &Out, Type *Ty, bool isSigned,
 
   case Type::VectorTyID: {
     TypedefDeclTypes.insert(Ty);
-    return Out << getVectorName(cast<VectorType>(Ty), true);
+    return Out << getVectorName(cast<VectorType>(Ty), true, isSigned);
   }
 
   default:
@@ -522,14 +524,11 @@ CWriter::printTypeName(raw_ostream &Out, Type *Ty, bool isSigned,
   }
 }
 
+// TODO_: Remove
 raw_ostream &CWriter::printTypeNameUnaligned(raw_ostream &Out, Type *Ty,
                                              bool isSigned) {
   if (VectorType *VTy = dyn_cast<VectorType>(Ty)) {
-    // MSVC doesn't handle __declspec(align) on parameters,
-    // but we specify it for Vector (hoping the compiler will vectorize it)
-    // so we need to avoid it sometimes
-    TypedefDeclTypes.insert(VTy);
-    return Out << getVectorName(VTy, false);
+    return Out << getVectorName(VTy, false, isSigned);
   }
   return printTypeName(Out, Ty, isSigned);
 }
@@ -2025,10 +2024,56 @@ void CWriter::generateHeader(Module &M) {
   for (std::set<Type *>::iterator it = SelectDeclTypes.begin(),
                                   end = SelectDeclTypes.end();
        it != end; ++it) {
-    // #define llvm_select_u8x4(a, b, c) ((a) ? (b) : (c))
-    Out << "#define llvm_select_";
+    // static Rty llvm_select_u8x4(<bool x 4> condition, <u8 x 4>
+    // iftrue, <u8 x 4> ifnot) {
+    //   return convert_<u8 x 4>(condition) ? iftrue : ifnot;
+    // }
+    Out << "static ";
+    printTypeNameUnaligned(Out, *it, false);
+    Out << " llvm_select_";
     printTypeString(Out, *it, false);
-    Out << "(a, b, c) ((a) ? (b) : (c))\n";
+    Out << "(";
+    if (isa<VectorType>(*it))
+      printTypeNameUnaligned(
+          Out,
+          VectorType::get(Type::getInt1Ty((*it)->getContext()),
+                          (*it)->getVectorNumElements()),
+          false);
+    else
+      //Out << "bool";
+      Out << "uchar";
+    Out << " condition, ";
+    printTypeNameUnaligned(Out, *it, false);
+    Out << " iftrue, ";
+    printTypeNameUnaligned(Out, *it, false);
+    Out << " ifnot) {\n  ";
+    VectorType *VTy = dyn_cast<VectorType>(*it);
+    if (VTy) {
+      Type *ElTy = VTy->getElementType();
+      Out << "  return select(ifnot, iftrue, -convert_";
+      switch (ElTy->getTypeID()) {
+      case Type::IntegerTyID:
+        printTypeName(Out, ElTy, true);
+        break;
+      case Type::FloatTyID:
+        Out << "int";
+        break;
+      case Type::DoubleTyID:
+        Out << "long";
+        break;
+      default:
+#ifndef NDEBUG
+        errs() << "Unknown vector element type: ";
+        printTypeNameUnaligned(errs(), ElTy, true);
+        errs() << "\n";
+#endif
+        errorWithMessage("Unknown vector element type");
+      }
+      Out << VTy->getNumElements() << "(condition));\n";
+    } else {
+      Out << "  return condition ? iftrue : ifnot;\n";
+    }
+    Out << "}\n";
   }
 
   // Loop over all compare operations
@@ -2036,19 +2081,33 @@ void CWriter::generateHeader(Module &M) {
            it = CmpDeclTypes.begin(),
            end = CmpDeclTypes.end();
        it != end; ++it) {
-    // #define llvm_icmp_ge_u8x4(l, r) ((l) >= (r))
+    // static <bool x 4> llvm_icmp_ge_u8x4(<u8 x 4> l, <u8 x 4> r) {
+    //   return l >= r;
+    // }
+    unsigned l = (*it).second->getVectorNumElements();
+    VectorType *RTy =
+        VectorType::get(Type::getInt1Ty((*it).second->getContext()), l);
     bool isSigned = CmpInst::isSigned((*it).first);
-    Out << "#define ";
+    Out << "static ";
+    printTypeName(Out, RTy);
     const auto Pred = (*it).first;
     if (CmpInst::isFPPredicate((*it).first)) {
       FCmpOps.insert(Pred);
-      Out << "llvm_fcmp_";
+      Out << " llvm_fcmp_";
     } else
-      Out << "llvm_icmp_";
+      Out << " llvm_icmp_";
     Out << getCmpPredicateName(Pred) << "_";
     printTypeString(Out, (*it).second, isSigned);
-    Out << "(l, r) ";
-    Out << "((l) ";
+    Out << "(";
+    printTypeNameUnaligned(Out, (*it).second);
+    Out << " l, ";
+    printTypeNameUnaligned(Out, (*it).second);
+    Out << " r) {\n  ";
+    Out << " return convert_";
+    printTypeName(Out, RTy);
+    Out << "(convert_";
+    printTypeName(Out, (*it).second, isSigned);
+    Out << "(l) ";
     switch ((*it).first) {
     case CmpInst::ICMP_EQ:
       Out << "==";
@@ -2078,7 +2137,9 @@ void CWriter::generateHeader(Module &M) {
 #endif
       errorWithMessage("invalid cmp predicate");
     }
-    Out << " (r))\n";
+    Out << " convert_";
+    printTypeName(Out, (*it).second, isSigned);
+    Out << "(r));\n}\n";
   }
 
   // TODO: Test cast
@@ -2090,13 +2151,7 @@ void CWriter::generateHeader(Module &M) {
        it != end; ++it) {
     // static <u32 x 4> llvm_ZExt_u8x4_u32x4(<u8 x 4> in) { //
     // Src->isVector == Dst->isVector
-    //   Rty out = {
-    //     in[0],
-    //     in[1],
-    //     in[2],
-    //     in[3]
-    //   };
-    //   return out;
+    //   return convert_<u32 x 4>(in);
     // }
     // static u32 llvm_BitCast_u8x4_u32(<u8 x 4> in) { //
     // Src->bitsSize == Dst->bitsSize
@@ -2131,75 +2186,32 @@ void CWriter::generateHeader(Module &M) {
     }
 
     Out << "static ";
-    printTypeName(Out, DstTy, DstSigned);
+    printTypeName(Out, DstTy, false);
     Out << " llvm_" << Instruction::getOpcodeName(opcode) << "_";
     printTypeString(Out, SrcTy, false);
     Out << "_";
     printTypeString(Out, DstTy, false);
     Out << "(";
-    printTypeNameUnaligned(Out, SrcTy, SrcSigned);
+    printTypeNameUnaligned(Out, SrcTy, false);
     Out << " in) {\n";
     if (opcode == Instruction::BitCast) {
       Out << "  union {\n    ";
-      printTypeName(Out, SrcTy, SrcSigned);
+      printTypeName(Out, SrcTy, false);
       Out << " in;\n    ";
-      printTypeName(Out, DstTy, DstSigned);
+      printTypeName(Out, DstTy, false);
       Out << " out;\n  } cast;\n";
       Out << "  cast.in = in;\n  return cast.out;\n}\n";
     } else if (isa<VectorType>(DstTy)) {
-      Out << "  ";
+      cwriter_assert(SrcTy->getVectorNumElements() == DstTy->getVectorNumElements());
+      Out << "  return convert_";
+      printTypeName(Out, DstTy, false);
+      Out << "(convert_";
       printTypeName(Out, DstTy, DstSigned);
-      Out << " out;\n";
-      unsigned n, l = DstTy->getVectorNumElements();
-      cwriter_assert(SrcTy->getVectorNumElements() == l);
-      for (n = 0; n < l; n++) {
-        Out << "  out.";
-        printVectorComponent(Out, n);
-        Out << " = in.";
-        printVectorComponent(Out, n);
-        Out << ";\n";
-      }
-      Out << "  return out;\n}\n";
+      Out << "(convert_";
+      printTypeName(Out, SrcTy, SrcSigned);
+      Out << "(in)));\n}\n";
     } else {
-      Out << "#ifndef __emulate_i128\n";
-      // easy case first: compiler supports i128 natively
       Out << "  return in;\n";
-      Out << "#else\n";
-      Out << "  ";
-      printTypeName(Out, DstTy, DstSigned);
-      Out << " out;\n";
-      Out << "  LLVM";
-      switch (opcode) {
-      case Instruction::UIToFP:
-        Out << "UItoFP";
-        break;
-      case Instruction::SIToFP:
-        Out << "SItoFP";
-        break;
-      case Instruction::Trunc:
-        Out << "Trunc";
-        break;
-      // case Instruction::FPExt:
-      // case Instruction::FPTrunc:
-      case Instruction::ZExt:
-        Out << "ZExt";
-        break;
-      case Instruction::FPToUI:
-        Out << "FPtoUI";
-        break;
-      case Instruction::SExt:
-        Out << "SExt";
-        break;
-      case Instruction::FPToSI:
-        Out << "FPtoSI";
-        break;
-      default:
-        errorWithMessage("Invalid cast opcode for i128");
-      }
-      Out << "(" << SrcTy->getPrimitiveSizeInBits() << ", &in, "
-          << DstTy->getPrimitiveSizeInBits() << ", &out);\n";
-      Out << "  return out;\n";
-      Out << "#endif\n";
       Out << "}\n";
     }
   }
@@ -2209,35 +2221,50 @@ void CWriter::generateHeader(Module &M) {
            it = InlineOpDeclTypes.begin(),
            end = InlineOpDeclTypes.end();
        it != end; ++it) {
-    // #define llvm_BinOp_u32x4(a, b) ((a) OP (b))
+    // static <u32 x 4> llvm_BinOp_u32x4(<u32 x 4> a, <u32 x 4> b) {
+    //   return a OP b;
+    // }
     unsigned opcode = (*it).first;
     Type *OpTy = (*it).second;
-    //Type *ElemTy = isa<VectorType>(OpTy) ? OpTy->getVectorElementType() : OpTy;
+    bool shouldCast;
+    bool isSigned;
+    opcodeNeedsCast(opcode, shouldCast, isSigned);
 
-    Out << "#define ";
+    Out << "static ";
+    printTypeName(Out, OpTy);
+    Out << " ";
     if (opcode == BinaryNeg) {
       Out << "llvm_neg_";
       printTypeString(Out, OpTy, false);
-      Out << "(a) ";
+      Out << "(";
+      printTypeNameUnaligned(Out, OpTy, isSigned);
+      Out << " a)";
     } else if (opcode == BinaryNot) {
       Out << "llvm_not_";
       printTypeString(Out, OpTy, false);
-      Out << "(a) ";
+      Out << "(";
+      printTypeNameUnaligned(Out, OpTy, isSigned);
+      Out << " a)";
     } else {
       Out << "llvm_" << Instruction::getOpcodeName(opcode) << "_";
       printTypeString(Out, OpTy, false);
-      Out << "(a, b) ";
+      Out << "(";
+      printTypeNameUnaligned(Out, OpTy, isSigned);
+      Out << " a, ";
+      printTypeNameUnaligned(Out, OpTy, isSigned);
+      Out << " b)";
     }
 
+    Out << " {\n  return ";
     if (opcode == BinaryNeg) {
-      Out << "(-(a))";
+      Out << "-a";
     } else if (opcode == BinaryNot) {
-      Out << "(~(a))";
+      Out << "~a";
     } else if (opcode == Instruction::FRem) {
       // Output a call to fmod/fmodf instead of emitting a%b
       Out << "fmod((a), (b))";
     } else {
-      Out << "((a) ";
+      Out << "a ";
       switch (opcode) {
       case Instruction::Add:
       case Instruction::FAdd:
@@ -2283,31 +2310,48 @@ void CWriter::generateHeader(Module &M) {
 #endif
         errorWithMessage("invalid operator type");
       }
-      Out << " (b))";
+      Out << " b";
     }
-    Out << "\n";
+    Out << ";\n}\n";
   }
   
   // Loop over all inline constructors
   for (std::set<Type *>::iterator it = CtorDeclTypes.begin(),
                                   end = CtorDeclTypes.end();
        it != end; ++it) {
-
+    // static <u32 x 4> llvm_ctor_u32x4(u32 x1, u32 x2, u32 x3, u32 x4) {
+    //   ...
+    // }
+    Out << "static ";
+    printTypeName(Out, *it);
+    Out << " llvm_ctor_";
+    printTypeString(Out, *it, false);
+    Out << "(";
+    StructType *STy = dyn_cast<StructType>(*it);
+    ArrayType *ATy = dyn_cast<ArrayType>(*it);
     VectorType *VTy = dyn_cast<VectorType>(*it);
+    unsigned e = (STy ? STy->getNumElements()
+                      : (ATy ? ATy->getNumElements() : VTy->getNumElements()));
+    bool printed = false;
+    for (unsigned i = 0; i != e; ++i) {
+      Type *ElTy =
+          STy ? STy->getElementType(i) : (*it)->getSequentialElementType();
+      if (isEmptyType(ElTy))
+        Out << " /* ";
+      else if (printed)
+        Out << ", ";
+      printTypeNameUnaligned(Out, ElTy);
+      Out << " x" << i;
+      if (isEmptyType(ElTy))
+        Out << " */";
+      else
+        printed = true;
+    }
+    Out << ") {\n";
     if (VTy) {
-      //#define llvm_ctor_u32x4(x1, x2, x3, x4) (Rty)((x1), (x2), (x3), (x4)))
+      // return (<u32 x 4>)(x1, x2, x3, x4);
       unsigned e = VTy->getNumElements();
-      Out << "#define ";
-      Out << "llvm_ctor_";
-      printTypeString(Out, *it, false);
-      Out << "(";
-      for (unsigned i = 0; i != e; ++i) {
-        Out << "x" << i;
-        if (i < e - 1) {
-          Out << ", ";
-        }
-      }
-      Out << ") ((";
+      Out << "  return (";
       printTypeName(Out, *it);
       Out << ")(";
       for (unsigned i = 0; i != e; ++i) {
@@ -2316,39 +2360,13 @@ void CWriter::generateHeader(Module &M) {
           Out << ", ";
         }
       }
-      Out << "))\n";
+      Out << ");";
     } else {
-      // static <u32 x 4> llvm_ctor_u32x4(u32 x1, u32 x2, u32 x3,
-      // u32 x4) {
-      //   Rty r = {
-      //     x1, x2, x3, x4
-      //   };
-      //   return r;
-      // }
-      Out << "static ";
-      printTypeName(Out, *it);
-      Out << " llvm_ctor_";
-      printTypeString(Out, *it, false);
-      Out << "(";
-      StructType *STy = dyn_cast<StructType>(*it);
-      ArrayType *ATy = dyn_cast<ArrayType>(*it);
-      unsigned e = (STy ? STy->getNumElements() : ATy->getNumElements());
-      bool printed = false;
-      for (unsigned i = 0; i != e; ++i) {
-        Type *ElTy =
-            STy ? STy->getElementType(i) : (*it)->getSequentialElementType();
-        if (isEmptyType(ElTy))
-          Out << " /* ";
-        else if (printed)
-          Out << ", ";
-        printTypeNameUnaligned(Out, ElTy);
-        Out << " x" << i;
-        if (isEmptyType(ElTy))
-          Out << " */";
-        else
-          printed = true;
-      }
-      Out << ") {\n  ";
+      // Rty r = {
+      //   x1, x2, x3, x4
+      // };
+      // return r;
+      Out << "  ";
       printTypeName(Out, *it);
       Out << " r;";
       for (unsigned i = 0; i != e; ++i) {
@@ -2363,8 +2381,9 @@ void CWriter::generateHeader(Module &M) {
         else
           cwriter_assert(0);
       }
-      Out << "\n  return r;\n}\n";
+      Out << "\n  return r;";
     }
+    Out << "\n}\n";
   }
 
   // Emit definitions of the intrinsics.
@@ -3783,93 +3802,9 @@ bool CWriter::visitBuiltinCall(CallInst &I, Intrinsic::ID ID) {
   CurInstr = &I;
 
   switch (ID) {
-  default: {
-#ifndef NDEBUG
-    errs() << "Unknown LLVM intrinsic! " << I << "\n";
-#endif
-    errorWithMessage("unknown llvm instrinsic");
-    return false;
-  }
   case Intrinsic::dbg_value:
   case Intrinsic::dbg_declare:
     return true; // ignore these intrinsics
-  case Intrinsic::vastart:
-    Out << "0; ";
-
-    Out << "va_start(*(va_list*)";
-    writeOperand(I.getArgOperand(0), ContextCasted);
-    Out << ", ";
-    // Output the last argument to the enclosing function.
-    if (I.getParent()->getParent()->arg_empty())
-      Out << "vararg_dummy_arg";
-    else {
-      Function::arg_iterator arg_end = I.getParent()->getParent()->arg_end();
-      writeOperand(--arg_end);
-    }
-    Out << ')';
-    return true;
-  case Intrinsic::vaend:
-    if (!isa<ConstantPointerNull>(I.getArgOperand(0))) {
-      Out << "0; va_end(*(va_list*)";
-      writeOperand(I.getArgOperand(0), ContextCasted);
-      Out << ')';
-    } else {
-      Out << "va_end(*(va_list*)0)";
-    }
-    return true;
-  case Intrinsic::vacopy:
-    Out << "0; ";
-    Out << "va_copy(*(va_list*)";
-    writeOperand(I.getArgOperand(0), ContextCasted);
-    Out << ", *(va_list*)";
-    writeOperand(I.getArgOperand(1), ContextCasted);
-    Out << ')';
-    return true;
-  case Intrinsic::returnaddress:
-    Out << "__builtin_return_address(";
-    writeOperand(I.getArgOperand(0), ContextCasted);
-    Out << ')';
-    return true;
-  case Intrinsic::frameaddress:
-    Out << "__builtin_frame_address(";
-    writeOperand(I.getArgOperand(0), ContextCasted);
-    Out << ')';
-    return true;
-  case Intrinsic::setjmp:
-    Out << "setjmp(*(jmp_buf*)";
-    writeOperand(I.getArgOperand(0), ContextCasted);
-    Out << ')';
-    return true;
-  case Intrinsic::longjmp:
-    Out << "longjmp(*(jmp_buf*)";
-    writeOperand(I.getArgOperand(0), ContextCasted);
-    Out << ", ";
-    writeOperand(I.getArgOperand(1), ContextCasted);
-    Out << ')';
-    return true;
-  case Intrinsic::sigsetjmp:
-    Out << "sigsetjmp(*(sigjmp_buf*)";
-    writeOperand(I.getArgOperand(0), ContextCasted);
-    Out << ',';
-    writeOperand(I.getArgOperand(1), ContextCasted);
-    Out << ')';
-    return true;
-  case Intrinsic::siglongjmp:
-    Out << "siglongjmp(*(sigjmp_buf*)";
-    writeOperand(I.getArgOperand(0), ContextCasted);
-    Out << ", ";
-    writeOperand(I.getArgOperand(1), ContextCasted);
-    Out << ')';
-    return true;
-  case Intrinsic::prefetch:
-    Out << "LLVM_PREFETCH((const void *)";
-    writeOperand(I.getArgOperand(0), ContextCasted);
-    Out << ", ";
-    writeOperand(I.getArgOperand(1), ContextCasted);
-    Out << ", ";
-    writeOperand(I.getArgOperand(2), ContextCasted);
-    Out << ")";
-    return true;
   case Intrinsic::stacksave:
     return true;
   case Intrinsic::stackprotector:
@@ -3899,6 +3834,27 @@ bool CWriter::visitBuiltinCall(CallInst &I, Intrinsic::ID ID) {
   case Intrinsic::trap:
   case Intrinsic::trunc:
     return false; // these use the normal function call emission
+  case Intrinsic::vastart:
+  case Intrinsic::vaend:
+  case Intrinsic::vacopy:
+  case Intrinsic::returnaddress:
+  case Intrinsic::frameaddress:
+  case Intrinsic::setjmp:
+  case Intrinsic::longjmp:
+  case Intrinsic::sigsetjmp:
+  case Intrinsic::siglongjmp:
+  case Intrinsic::prefetch:
+#ifndef NDEBUG
+    errs() << "Unsupported LLVM intrinsic! " << I << "\n";
+#endif
+    errorWithMessage("unknown llvm instrinsic");
+    return false;
+  default:
+#ifndef NDEBUG
+    errs() << "Unknown LLVM intrinsic! " << I << "\n";
+#endif
+    errorWithMessage("unknown llvm instrinsic");
+    return false;
   }
 }
 
