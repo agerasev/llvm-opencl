@@ -1164,10 +1164,7 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
       // value that holds the value in hex.
       Out << "(*("
           << (FPC->getType() == Type::getFloatTy(CPV->getContext())
-                  ? "float"
-                  : FPC->getType() == Type::getDoubleTy(CPV->getContext())
-                        ? "double"
-                        : "long double")
+                  ? "__constant float" : "__constant double")
           << "*)&FPConstant" << I->second << ')';
     } else {
       double V;
@@ -1176,13 +1173,7 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
       else if (FPC->getType() == Type::getDoubleTy(CPV->getContext()))
         V = FPC->getValueAPF().convertToDouble();
       else {
-        // Long double.  Convert the number to double, discarding precision.
-        // This is not awesome, but it at least makes the CBE output somewhat
-        // useful.
-        APFloat Tmp = FPC->getValueAPF();
-        bool LosesInfo;
-        Tmp.convert(APFloat::IEEEdouble(), APFloat::rmTowardZero, &LosesInfo);
-        V = Tmp.convertToDouble();
+        errorWithMessage("Unknown FP type");
       }
 
       if (std::isnan(V)) {
@@ -2487,13 +2478,13 @@ void CWriter::printFloatingPointConstants(const Constant *C) {
     double Val = FPC->getValueAPF().convertToDouble();
     uint64_t i = FPC->getValueAPF().bitcastToAPInt().getZExtValue();
     headerUseConstantDoubleTy();
-    Out << "static const ConstantDoubleTy FPConstant" << Counter << " = 0x"
+    Out << "__constant ConstantDoubleTy FPConstant" << Counter << " = 0x"
         << utohexstr(i) << "ULL;    /* " << Val << " */\n";
   } else if (FPC->getType() == Type::getFloatTy(FPC->getContext())) {
     float Val = FPC->getValueAPF().convertToFloat();
     uint32_t i = (uint32_t)FPC->getValueAPF().bitcastToAPInt().getZExtValue();
     headerUseConstantFloatTy();
-    Out << "static const ConstantFloatTy FPConstant" << Counter << " = 0x"
+    Out << "__constant ConstantFloatTy FPConstant" << Counter << " = 0x"
         << utohexstr(i) << "U;    /* " << Val << " */\n";
   } else {
     errorWithMessage("Unknown float type!");
