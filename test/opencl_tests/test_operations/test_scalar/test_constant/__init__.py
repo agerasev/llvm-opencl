@@ -8,7 +8,7 @@ from opencl import Mem, run_kernel
 
 
 def run(ctx, src):
-    n = 64
+    m, n = 8, 64
     a = np.zeros(n, dtype=cltypes.int)
     b = np.zeros(n, dtype=cltypes.float)
     run_kernel(ctx, src, (n,), *[Mem(x) for x in (a, b)])

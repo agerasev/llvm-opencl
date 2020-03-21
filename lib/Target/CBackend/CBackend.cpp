@@ -167,9 +167,6 @@ bool CWriter::runOnFunction(Function &F) {
   // Get rid of intrinsics we can't handle.
   bool Modified = lowerIntrinsics(F);
 
-  // Output all floating point constants that cannot be printed accurately.
-  printFloatingPointConstants(F);
-
   printFunction(F);
 
   LI = nullptr;
@@ -662,6 +659,7 @@ raw_ostream &CWriter::printVectorDeclaration(raw_ostream &Out,
   return Out;
 }
 
+
 void CWriter::printConstantArray(ConstantArray *CPA,
                                  enum OperandContext Context) {
   printConstant(cast<Constant>(CPA->getOperand(0)), Context);
@@ -793,14 +791,6 @@ raw_ostream &CWriter::printVectorShuffled(raw_ostream &Out, const std::vector<ui
   return Out;
 }
 
-// isFPCSafeToPrint - Returns true if we may assume that CFP may be written out
-// textually as a double (rather than as a reference to a stack-allocated
-// variable). We decide this by converting CFP to a string and back into a
-// double, and then checking whether the conversion results in a bit-equal
-// double to the original value of CFP. This depends on us and the target C
-// compiler agreeing on the conversion process (which is pretty likely since we
-// only deal in IEEE FP).
-
 // TODO copied from CppBackend, new code should use raw_ostream
 static inline std::string ftostr(const APFloat &V) {
   std::string Buf;
@@ -813,40 +803,6 @@ static inline std::string ftostr(const APFloat &V) {
   }
   return "<unknown format in ftostr>"; // error
 }
-
-static bool isFPCSafeToPrint(const ConstantFP *CFP) {
-  bool ignored;
-  // Do long doubles in hex for now.
-  if (CFP->getType() != Type::getFloatTy(CFP->getContext()) &&
-      CFP->getType() != Type::getDoubleTy(CFP->getContext()))
-    return false;
-  APFloat APF = APFloat(CFP->getValueAPF()); // copy
-  if (CFP->getType() == Type::getFloatTy(CFP->getContext()))
-    APF.convert(APFloat::IEEEdouble(), APFloat::rmNearestTiesToEven, &ignored);
-#if HAVE_PRINTF_A && ENABLE_CBE_PRINTF_A
-  char Buffer[100];
-  sprintf(Buffer, "%a", APF.convertToDouble());
-  if (!strncmp(Buffer, "0x", 2) || !strncmp(Buffer, "-0x", 3) ||
-      !strncmp(Buffer, "+0x", 3))
-    return APF.bitwiseIsEqual(APFloat(atof(Buffer)));
-  return false;
-#else
-  std::string StrVal = ftostr(APF);
-
-  while (StrVal[0] == ' ')
-    StrVal.erase(StrVal.begin());
-
-  // Check to make sure that the stringized number is not some string like "Inf"
-  // or NaN.  Check that the string matches the "[-+]?[0-9]" regex.
-  if ((StrVal[0] >= '0' && StrVal[0] <= '9') ||
-      ((StrVal[0] == '-' || StrVal[0] == '+') &&
-       (StrVal[1] >= '0' && StrVal[1] <= '9')))
-    // Reparse stringized version!
-    return APF.bitwiseIsEqual(APFloat(atof(StrVal.c_str())));
-  return false;
-#endif
-}
-
 /// Print out the casting for a cast operation. This does the double casting
 /// necessary for conversion to the destination type, if necessary.
 /// @brief Print a cast
@@ -916,184 +872,7 @@ void CWriter::printCast(unsigned opc, Type *SrcTy, Type *DstTy) {
 // printConstant - The LLVM Constant to C Constant converter.
 void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(CPV)) {
-    // TODO: VectorType are valid here, but not supported
-    if (!CE->getType()->isIntegerTy() && !CE->getType()->isFloatingPointTy() &&
-        !CE->getType()->isPointerTy()) {
-#ifndef NDEBUG
-      errs() << "Unsupported constant type " << *CE->getType() << " in: " << *CE
-             << "\n";
-#endif
-      errorWithMessage("Unsupported constant type");
-    }
-    switch (CE->getOpcode()) {
-    case Instruction::Trunc:
-    case Instruction::ZExt:
-    case Instruction::SExt:
-    case Instruction::FPTrunc:
-    case Instruction::FPExt:
-    case Instruction::UIToFP:
-    case Instruction::SIToFP:
-    case Instruction::FPToUI:
-    case Instruction::FPToSI:
-    case Instruction::PtrToInt:
-    case Instruction::IntToPtr:
-    case Instruction::BitCast:
-      Out << "(";
-      printCast(CE->getOpcode(), CE->getOperand(0)->getType(), CE->getType());
-      if (CE->getOpcode() == Instruction::SExt &&
-          CE->getOperand(0)->getType() == Type::getInt1Ty(CPV->getContext())) {
-        // Make sure we really sext from bool here by subtracting from 0
-        Out << "0-";
-      }
-      printConstant(CE->getOperand(0), ContextCasted);
-      if (CE->getType() == Type::getInt1Ty(CPV->getContext()) &&
-          (CE->getOpcode() == Instruction::Trunc ||
-           CE->getOpcode() == Instruction::FPToUI ||
-           CE->getOpcode() == Instruction::FPToSI ||
-           CE->getOpcode() == Instruction::PtrToInt)) {
-        // Make sure we really truncate to bool here by anding with 1
-        Out << "&1u";
-      }
-      Out << ')';
-      return;
-
-    case Instruction::GetElementPtr:
-      Out << "(";
-      printGEPExpression(CE->getOperand(0), gep_type_begin(CPV),
-                         gep_type_end(CPV));
-      Out << ")";
-      return;
-    case Instruction::Select:
-      Out << '(';
-      printConstant(CE->getOperand(0), ContextCasted);
-      Out << '?';
-      printConstant(CE->getOperand(1), ContextNormal);
-      Out << ':';
-      printConstant(CE->getOperand(2), ContextNormal);
-      Out << ')';
-      return;
-    case Instruction::Add:
-    case Instruction::FAdd:
-    case Instruction::Sub:
-    case Instruction::FSub:
-    case Instruction::Mul:
-    case Instruction::FMul:
-    case Instruction::SDiv:
-    case Instruction::UDiv:
-    case Instruction::FDiv:
-    case Instruction::URem:
-    case Instruction::SRem:
-    case Instruction::FRem:
-    case Instruction::And:
-    case Instruction::Or:
-    case Instruction::Xor:
-    case Instruction::ICmp:
-    case Instruction::Shl:
-    case Instruction::LShr:
-    case Instruction::AShr: {
-      Out << '(';
-      bool NeedsClosingParens = printConstExprCast(CE);
-      printConstantWithCast(CE->getOperand(0), CE->getOpcode());
-      switch (CE->getOpcode()) {
-      case Instruction::Add:
-      case Instruction::FAdd:
-        Out << " + ";
-        break;
-      case Instruction::Sub:
-      case Instruction::FSub:
-        Out << " - ";
-        break;
-      case Instruction::Mul:
-      case Instruction::FMul:
-        Out << " * ";
-        break;
-      case Instruction::URem:
-      case Instruction::SRem:
-      case Instruction::FRem:
-        Out << " % ";
-        break;
-      case Instruction::UDiv:
-      case Instruction::SDiv:
-      case Instruction::FDiv:
-        Out << " / ";
-        break;
-      case Instruction::And:
-        Out << " & ";
-        break;
-      case Instruction::Or:
-        Out << " | ";
-        break;
-      case Instruction::Xor:
-        Out << " ^ ";
-        break;
-      case Instruction::Shl:
-        Out << " << ";
-        break;
-      case Instruction::LShr:
-      case Instruction::AShr:
-        Out << " >> ";
-        break;
-      case Instruction::ICmp:
-        switch (CE->getPredicate()) {
-        case ICmpInst::ICMP_EQ:
-          Out << " == ";
-          break;
-        case ICmpInst::ICMP_NE:
-          Out << " != ";
-          break;
-        case ICmpInst::ICMP_SLT:
-        case ICmpInst::ICMP_ULT:
-          Out << " < ";
-          break;
-        case ICmpInst::ICMP_SLE:
-        case ICmpInst::ICMP_ULE:
-          Out << " <= ";
-          break;
-        case ICmpInst::ICMP_SGT:
-        case ICmpInst::ICMP_UGT:
-          Out << " > ";
-          break;
-        case ICmpInst::ICMP_SGE:
-        case ICmpInst::ICMP_UGE:
-          Out << " >= ";
-          break;
-        default:
-          errorWithMessage("Illegal ICmp predicate");
-        }
-        break;
-      default:
-        errorWithMessage("Illegal opcode here!");
-      }
-      printConstantWithCast(CE->getOperand(1), CE->getOpcode());
-      if (NeedsClosingParens)
-        Out << "))";
-      Out << ')';
-      return;
-    }
-    case Instruction::FCmp: {
-      Out << '(';
-      bool NeedsClosingParens = printConstExprCast(CE);
-
-      const auto Pred = (CmpInst::Predicate)CE->getPredicate();
-      OutModifier mod(Out.str());
-      printConstant(CE->getOperand(0), ContextCasted);
-      Out.str();
-      std::string l = mod.cut_tail();
-      printConstant(CE->getOperand(1), ContextCasted);
-      Out.str();
-      std::string r = mod.cut_tail();
-      Out << "(" + getCmpImplem(Pred, l, r) + ")";
-      if (NeedsClosingParens)
-        Out << "))";
-      Out << ')';
-      return;
-    }
-    default:
-#ifndef NDEBUG
-      errs() << "CWriter Error: Unhandled constant expression: " << *CE << "\n";
-#endif
-      errorWithMessage("unhandled constant expression");
-    }
+    errorWithMessage("Constant expressions is not supported");
   } else if (isa<UndefValue>(CPV) && CPV->getType()->isSingleValueType()) {
     if (CPV->getType()->isVectorTy()) {
       if (Context == ContextStatic) {
@@ -1154,48 +933,18 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
     return;
   }
 
-  switch (CPV->getType()->getTypeID()) {
-  case Type::FloatTyID:
-  case Type::DoubleTyID: {
-    ConstantFP *FPC = cast<ConstantFP>(CPV);
-    auto I = FPConstantMap.find(FPC);
-    if (I != FPConstantMap.end()) {
-      // Because of FP precision problems we must load from a stack allocated
-      // value that holds the value in hex.
-      Out << "(*("
-          << (FPC->getType() == Type::getFloatTy(CPV->getContext())
-                  ? "__constant float" : "__constant double")
-          << "*)&FPConstant" << I->second << ')';
-    } else {
-      double V;
-      if (FPC->getType() == Type::getFloatTy(CPV->getContext()))
-        V = FPC->getValueAPF().convertToFloat();
-      else if (FPC->getType() == Type::getDoubleTy(CPV->getContext()))
-        V = FPC->getValueAPF().convertToDouble();
-      else {
-        errorWithMessage("Unknown FP type");
-      }
-
-      if (std::isnan(V)) {
-        errorWithMessage("The value is NaN");
-      } else if (std::isinf(V)) {
-        errorWithMessage("The value is Inf");
-      } else {
-        std::string Num;
-#if HAVE_PRINTF_A && ENABLE_CBE_PRINTF_A
-        // Print out the constant as a floating point number.
-        char Buffer[100];
-        sprintf(Buffer, "%a", V);
-        Num = Buffer;
-#else
-        Num = ftostr(FPC->getValueAPF());
-#endif
-        Out << Num;
-      }
-    }
-    break;
+  ConstantFP *FPC = dyn_cast<ConstantFP>(CPV);
+  if (FPC) {
+    printFPConstantValue(Out, FPC, Context != ContextStatic);
+    return;
   }
-
+  
+  switch (CPV->getType()->getTypeID()) {
+  case Type::IntegerTyID:
+  case Type::FloatTyID:
+  case Type::DoubleTyID:
+    // Already handled
+    break;
   case Type::ArrayTyID: {
     if (printConstantString(CPV, Context))
       break;
@@ -1229,7 +978,6 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
                 : ")"); // Arrays are wrapped in struct types.
     break;
   }
-
   case Type::VectorTyID: {
     VectorType *VT = cast<VectorType>(CPV->getType());
     cwriter_assert(VT->getNumElements() != 0 && !isEmptyType(VT));
@@ -1259,7 +1007,6 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
     Out << (Context == ContextStatic ? " }" : ")");
     break;
   }
-
   case Type::StructTyID: {
     StructType *ST = cast<StructType>(CPV->getType());
     cwriter_assert(!isEmptyType(ST));
@@ -1301,78 +1048,12 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
     Out << (Context == ContextStatic ? " }" : ")");
     break;
   }
-
-  case Type::PointerTyID:
-    if (isa<ConstantPointerNull>(CPV)) {
-      Out << "((";
-      printTypeName(Out, CPV->getType()); // sign doesn't matter
-      Out << ")/*NULL*/0)";
-      break;
-    } else if (GlobalValue *GV = dyn_cast<GlobalValue>(CPV)) {
-      writeOperand(GV);
-      break;
-    }
-  LLVM_FALLTHROUGH;
   default:
 #ifndef NDEBUG
-    errs() << "Unknown constant type: " << *CPV << "\n";
+    errs() << "This constant type is not supported: " << *CPV << "\n";
 #endif
-    errorWithMessage("unknown constant type");
+    errorWithMessage("This constant type is not supported");
   }
-}
-
-// Some constant expressions need to be casted back to the original types
-// because their operands were casted to the expected type. This function takes
-// care of detecting that case and printing the cast for the ConstantExpr.
-bool CWriter::printConstExprCast(ConstantExpr *CE) {
-  bool NeedsExplicitCast = false;
-  Type *Ty = CE->getOperand(0)->getType();
-  bool TypeIsSigned = false;
-  switch (CE->getOpcode()) {
-  case Instruction::Add:
-  case Instruction::Sub:
-  case Instruction::Mul:
-    // We need to cast integer arithmetic so that it is always performed
-    // as unsigned, to avoid undefined behavior on overflow.
-  case Instruction::LShr:
-  case Instruction::URem:
-  case Instruction::UDiv:
-    NeedsExplicitCast = true;
-    break;
-  case Instruction::AShr:
-  case Instruction::SRem:
-  case Instruction::SDiv:
-    NeedsExplicitCast = true;
-    TypeIsSigned = true;
-    break;
-  case Instruction::SExt:
-    Ty = CE->getType();
-    NeedsExplicitCast = true;
-    TypeIsSigned = true;
-    break;
-  case Instruction::ZExt:
-  case Instruction::Trunc:
-  case Instruction::FPTrunc:
-  case Instruction::FPExt:
-  case Instruction::UIToFP:
-  case Instruction::SIToFP:
-  case Instruction::FPToUI:
-  case Instruction::FPToSI:
-  case Instruction::PtrToInt:
-  case Instruction::IntToPtr:
-  case Instruction::BitCast:
-    Ty = CE->getType();
-    NeedsExplicitCast = true;
-    break;
-  default:
-    break;
-  }
-  if (NeedsExplicitCast) {
-    Out << "((";
-    printTypeName(Out, Ty, TypeIsSigned); // not integer, sign doesn't matter
-    Out << ")(";
-  }
-  return NeedsExplicitCast;
 }
 
 //  Print a constant assuming that it is the operand for a given Opcode. The
@@ -1396,6 +1077,7 @@ void CWriter::printConstantWithCast(Constant *CPV, unsigned Opcode) {
   bool shouldCast;
   bool typeIsSigned;
   opcodeNeedsCast(Opcode, shouldCast, typeIsSigned);
+  // TODO_: Examine `opcodeNeedsCast()`
 
   // Write out the casted constant if we should, otherwise just write the
   // operand.
@@ -1645,14 +1327,6 @@ void CWriter::writeOperandWithCast(Value *Operand, ICmpInst &Cmp) {
   Out << ")";
 }
 
-static void defineConstantDoubleTy(raw_ostream &Out) {
-  Out << "typedef ulong ConstantDoubleTy;\n";
-}
-
-static void defineConstantFloatTy(raw_ostream &Out) {
-  Out << "typedef uint ConstantFloatTy;\n";
-}
-
 static void defineUnalignedLoad(raw_ostream &Out) {
   // Define unaligned-load helper macro
   Out << "#define __UNALIGNED_LOAD__(type, align, op) ((struct { type data "
@@ -1741,10 +1415,6 @@ static void PrintEscapedString(const std::string &Str, raw_ostream &Out) {
 // directives to cater to specific compilers as need be.
 void CWriter::generateCompilerSpecificCode(raw_ostream &Out,
                                            const DataLayout *) const {
-  if (headerIncConstantDoubleTy())
-    defineConstantDoubleTy(Out);
-  if (headerIncConstantFloatTy())
-    defineConstantFloatTy(Out);
   if (headerIncUnalignedLoad())
     defineUnalignedLoad(Out);
 }
@@ -1801,7 +1471,6 @@ bool CWriter::doFinalization(Module &M) {
   delete MOFI;
   MOFI = nullptr;
 
-  FPConstantMap.clear();
   ByValParams.clear();
   AnonValueNumbers.clear();
   UnnamedStructIDs.clear();
@@ -2392,17 +2061,9 @@ void CWriter::declareOneGlobalVariable(GlobalVariable *I) {
   if (getGlobalVariableClass(&*I))
     return;
 
-  if (I->hasDLLImportStorageClass())
-    Out << "__declspec(dllimport) ";
-  else if (I->hasDLLExportStorageClass())
-    Out << "__declspec(dllexport) ";
-
   if (I->hasLocalLinkage())
     Out << "static ";
-
-  // Thread Local Storage
-  if (I->isThreadLocal())
-    Out << "__thread ";
+  Out << "__constant ";
 
   Type *ElTy = I->getType()->getElementType();
   unsigned Alignment = I->getAlignment();
@@ -2441,53 +2102,48 @@ void CWriter::declareOneGlobalVariable(GlobalVariable *I) {
   Out << ";\n";
 }
 
-/// Output all floating point constants that cannot be printed accurately...
-void CWriter::printFloatingPointConstants(Function &F) {
-  // Scan the module for floating point constants.  If any FP constant is used
-  // in the function, we want to redirect it here so that we do not depend on
-  // the precision of the printed form, unless the printed form preserves
-  // precision.
-  for (inst_iterator I = inst_begin(&F), E = inst_end(&F); I != E; ++I)
-    for (Instruction::op_iterator I_Op = I->op_begin(), E_Op = I->op_end();
-         I_Op != E_Op; ++I_Op)
-      if (const Constant *C = dyn_cast<Constant>(I_Op))
-        printFloatingPointConstants(C);
-  Out << '\n';
-}
-
-void CWriter::printFloatingPointConstants(const Constant *C) {
-  // If this is a constant expression, recursively check for constant fp values.
-  if (const ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
-    for (unsigned i = 0, e = CE->getNumOperands(); i != e; ++i)
-      printFloatingPointConstants(CE->getOperand(i));
-    return;
-  }
-
-  // Otherwise, check for a FP constant that we need to print.
-  const ConstantFP *FPC = dyn_cast<ConstantFP>(C);
-  if (FPC == nullptr ||
-      // Do not put in FPConstantMap if safe.
-      isFPCSafeToPrint(FPC) ||
-      // Already printed this constant?
-      FPConstantMap.has(FPC))
-    return;
-
-  unsigned Counter = FPConstantMap.getOrInsert(FPC);
-
-  if (FPC->getType() == Type::getDoubleTy(FPC->getContext())) {
-    double Val = FPC->getValueAPF().convertToDouble();
-    uint64_t i = FPC->getValueAPF().bitcastToAPInt().getZExtValue();
-    headerUseConstantDoubleTy();
-    Out << "__constant ConstantDoubleTy FPConstant" << Counter << " = 0x"
-        << utohexstr(i) << "ULL;    /* " << Val << " */\n";
-  } else if (FPC->getType() == Type::getFloatTy(FPC->getContext())) {
-    float Val = FPC->getValueAPF().convertToFloat();
-    uint32_t i = (uint32_t)FPC->getValueAPF().bitcastToAPInt().getZExtValue();
-    headerUseConstantFloatTy();
-    Out << "__constant ConstantFloatTy FPConstant" << Counter << " = 0x"
-        << utohexstr(i) << "U;    /* " << Val << " */\n";
+void CWriter::printFPConstantValue(raw_ostream &Out, const ConstantFP *FPC, bool hex) {
+  if (!hex) {
+    // Print in decimal form.
+    // It can be used in constexpr but may result in precision loss.
+    double V;
+    const char *postfix = "";
+    switch(FPC->getType()->getTypeID()) {
+      case Type::FloatTyID:
+        V = FPC->getValueAPF().convertToFloat();
+        postfix = "f";
+        break;
+      case Type::DoubleTyID:
+        V = FPC->getValueAPF().convertToDouble();
+        break;
+      default:
+        errorWithMessage("Unsupported FP constant type");
+    }
+    if (std::isnan(V)) {
+      errorWithMessage("The value is NaN");
+    } else if (std::isinf(V)) {
+      errorWithMessage("The value is Inf");
+    } else {
+      Out << ftostr(FPC->getValueAPF()) << postfix;
+    }
   } else {
-    errorWithMessage("Unknown float type!");
+    // Print in hexadecimal form (as represented in LLVM).
+    // To cast it back to float we need to use OpenCL `as_type()` function.
+    Out << "as_";
+    printTypeName(Out, FPC->getType());
+    Out << "(";
+    Out << "0x" << utohexstr(FPC->getValueAPF().bitcastToAPInt().getZExtValue());
+    switch (FPC->getType()->getTypeID()) {
+      case Type::FloatTyID:
+        Out << "u";
+        break;
+      case Type::DoubleTyID:
+        Out << "ul";
+        break;
+      default:
+        errorWithMessage("Unsupported FP constant type");
+    }
+    Out << ")";
   }
 }
 

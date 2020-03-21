@@ -63,7 +63,6 @@ class CWriter : public FunctionPass, public InstVisitor<CWriter> {
   const DataLayout *TD = nullptr;
   const Instruction *CurInstr = nullptr;
 
-  IDMap<const ConstantFP *> FPConstantMap;
   std::set<const Argument *> ByValParams;
 
   IDMap<const Value *> AnonValueNumbers;
@@ -92,8 +91,6 @@ class CWriter : public FunctionPass, public InstVisitor<CWriter> {
 
   struct {
     bool UnalignedLoad : 1;
-    bool ConstantDoubleTy : 1;
-    bool ConstantFloatTy : 1;
     bool BitCastUnion : 1;
   } UsedHeaders;
 
@@ -104,8 +101,6 @@ class CWriter : public FunctionPass, public InstVisitor<CWriter> {
   bool headerInc##Name() const { return UsedHeaders.Name; }
 
   USED_HEADERS_FLAG(UnalignedLoad)
-  USED_HEADERS_FLAG(ConstantDoubleTy)
-  USED_HEADERS_FLAG(ConstantFloatTy)
   USED_HEADERS_FLAG(BitCastUnion)
 
   void generateCompilerSpecificCode(raw_ostream &Out, const DataLayout *) const;
@@ -208,8 +203,7 @@ private:
   void printModuleTypes(raw_ostream &Out);
   void printContainedTypes(raw_ostream &Out, Type *Ty, std::set<Type *> &);
 
-  void printFloatingPointConstants(Function &F);
-  void printFloatingPointConstants(const Constant *C);
+  void printFPConstantValue(raw_ostream &Out, const ConstantFP *FPC, bool hex=true);
 
   void printFunction(Function &);
   void printBasicBlock(BasicBlock *BB);
@@ -218,12 +212,12 @@ private:
   void printCast(unsigned opcode, Type *SrcTy, Type *DstTy);
   void printConstant(Constant *CPV, enum OperandContext Context);
   void printConstantWithCast(Constant *CPV, unsigned Opcode);
-  bool printConstExprCast(ConstantExpr *CE);
   void printConstantArray(ConstantArray *CPA, enum OperandContext Context);
   void printConstantVector(ConstantVector *CV, enum OperandContext Context);
   void printConstantDataSequential(ConstantDataSequential *CDS,
                                    enum OperandContext Context);
   bool printConstantString(Constant *C, enum OperandContext Context);
+  
 
   bool isEmptyType(Type *Ty) const;
   bool isAddressExposed(Value *V) const;

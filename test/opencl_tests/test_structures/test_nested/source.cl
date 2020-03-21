@@ -14,12 +14,7 @@ int get_num(const B *b) {
 
 __kernel void kernel_main(__global int *a, __global const int *b, __global const float *c) {
     int i = get_global_id(0);
-    B s = {
-        {
-            b[i],
-            vload3(i, c),
-        },
-        true
-    };
-    a[i] = get_num(&s);
+    B cs = { { 10, (float3)(0.0f, 1.0f, 2.0f) }, true };
+    B s = { { b[i], vload3(i, c) }, (b[i] % 2) == 0 };
+    a[i] = get_num(&cs) + get_num(&s);
 }
