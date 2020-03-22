@@ -170,13 +170,8 @@ private:
 
   enum OperandContext {
     ContextNormal,
-    ContextCasted,
-    // Casted context means the type-cast will be implicit,
-    // such as the RHS of a `var = RHS;` expression
-    // or inside a struct initializer expression
     ContextStatic
     // Static context means that it is being used in as a static initializer
-    // (also implies ContextCasted)
   };
 
   void writeOperandDeref(Value *Operand);
@@ -203,14 +198,15 @@ private:
   void printModuleTypes(raw_ostream &Out);
   void printContainedTypes(raw_ostream &Out, Type *Ty, std::set<Type *> &);
 
-  void printFPConstantValue(raw_ostream &Out, const ConstantFP *FPC, bool hex=true);
+  void printFPConstantValue(raw_ostream &Out, const ConstantFP *FPC,
+                            enum OperandContext Context=ContextNormal);
 
   void printFunction(Function &);
   void printBasicBlock(BasicBlock *BB);
   void printLoop(Loop *L);
 
   void printCast(unsigned opcode, Type *SrcTy, Type *DstTy);
-  void printConstant(Constant *CPV, enum OperandContext Context);
+  void printConstant(Constant *CPV, enum OperandContext Context=ContextNormal);
   void printConstantWithCast(Constant *CPV, unsigned Opcode);
   void printConstantArray(ConstantArray *CPA, enum OperandContext Context);
   void printConstantVector(ConstantVector *CV, enum OperandContext Context);

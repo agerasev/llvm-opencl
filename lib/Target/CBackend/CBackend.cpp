@@ -890,7 +890,7 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
       for (unsigned i = 0; i != NumElts; ++i) {
         if (i)
           Out << ", ";
-        printConstant(Zero, ContextCasted);
+        printConstant(Zero);
       }
       Out << ")";
 
@@ -935,7 +935,7 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
 
   ConstantFP *FPC = dyn_cast<ConstantFP>(CPV);
   if (FPC) {
-    printFPConstantValue(Out, FPC, Context != ContextStatic);
+    printFPConstantValue(Out, FPC, Context);
     return;
   }
   
@@ -955,7 +955,7 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
       Out << "llvm_ctor_";
       printTypeString(Out, AT);
       Out << "(";
-      Context = ContextCasted;
+      Context = ContextNormal;
     } else {
       Out << "{ { "; // Arrays are wrapped in struct types.
     }
@@ -986,7 +986,7 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
       Out << "llvm_ctor_";
       printTypeString(Out, VT);
       Out << "(";
-      Context = ContextCasted;
+      Context = ContextNormal;
     } else {
       Out << "{ ";
     }
@@ -1015,7 +1015,7 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
       Out << "llvm_ctor_";
       printTypeString(Out, ST);
       Out << "(";
-      Context = ContextCasted;
+      Context = ContextNormal;
     } else {
       Out << "{ ";
     }
@@ -1085,10 +1085,10 @@ void CWriter::printConstantWithCast(Constant *CPV, unsigned Opcode) {
     Out << "((";
     printSimpleType(Out, OpTy, typeIsSigned);
     Out << ")";
-    printConstant(CPV, ContextCasted);
+    printConstant(CPV);
     Out << ")";
   } else
-    printConstant(CPV, ContextCasted);
+    printConstant(CPV);
 }
 
 std::string CWriter::GetValueName(Value *Operand) {
@@ -1289,10 +1289,10 @@ void CWriter::writeOperandWithCast(Value *Operand, unsigned Opcode) {
     Out << "((";
     printSimpleType(Out, OpTy, castIsSigned);
     Out << ")";
-    writeOperand(Operand, ContextCasted);
+    writeOperand(Operand);
     Out << ")";
   } else
-    writeOperand(Operand, ContextCasted);
+    writeOperand(Operand);
 }
 
 // Write the operand with a cast to another type based on the icmp predicate
@@ -1873,6 +1873,7 @@ void CWriter::generateHeader(Module &M) {
     Type *OpTy = (*it).second;
     bool shouldCast;
     bool isSigned;
+    // TODO_: See `opcodeNeedsCast`
     opcodeNeedsCast(opcode, shouldCast, isSigned);
 
     Out << "static ";
@@ -1882,34 +1883,43 @@ void CWriter::generateHeader(Module &M) {
       Out << "llvm_neg_";
       printTypeString(Out, OpTy);
       Out << "(";
-      printTypeName(Out, OpTy, isSigned);
+      printTypeName(Out, OpTy);
       Out << " a)";
     } else if (opcode == BinaryNot) {
       Out << "llvm_not_";
       printTypeString(Out, OpTy);
       Out << "(";
-      printTypeName(Out, OpTy, isSigned);
+      printTypeName(Out, OpTy);
       Out << " a)";
     } else {
       Out << "llvm_" << Instruction::getOpcodeName(opcode) << "_";
       printTypeString(Out, OpTy);
       Out << "(";
-      printTypeName(Out, OpTy, isSigned);
+      printTypeName(Out, OpTy);
       Out << " a, ";
-      printTypeName(Out, OpTy, isSigned);
+      printTypeName(Out, OpTy);
       Out << " b)";
     }
 
-    Out << " {\n  return ";
+    Out << " {\n  return (";
+    printTypeName(Out, OpTy);
+    Out << ")(";
+
     if (opcode == BinaryNeg) {
-      Out << "-a";
+      Out << "-(";
+      printTypeName(Out, OpTy, isSigned);
+      Out << ")a";
     } else if (opcode == BinaryNot) {
-      Out << "~a";
+      Out << "~(";
+      printTypeName(Out, OpTy, isSigned);
+      Out << ")a";
     } else if (opcode == Instruction::FRem) {
-      // Output a call to fmod/fmodf instead of emitting a%b
-      Out << "fmod((a), (b))";
+      // Output a call to fmod instead of emitting a%b
+      Out << "fmod(a, b)";
     } else {
-      Out << "a ";
+      Out << "(";
+      printTypeName(Out, OpTy, isSigned);
+      Out << ")a ";
       switch (opcode) {
       case Instruction::Add:
       case Instruction::FAdd:
@@ -1955,9 +1965,11 @@ void CWriter::generateHeader(Module &M) {
 #endif
         errorWithMessage("invalid operator type");
       }
-      Out << " b";
+      Out << " (";
+      printTypeName(Out, OpTy, isSigned);
+      Out << ")b";
     }
-    Out << ";\n}\n";
+    Out << ");\n}\n";
   }
   
   // Loop over all inline constructors
@@ -2093,8 +2105,9 @@ void CWriter::declareOneGlobalVariable(GlobalVariable *I) {
   Out << ";\n";
 }
 
-void CWriter::printFPConstantValue(raw_ostream &Out, const ConstantFP *FPC, bool hex) {
-  if (!hex) {
+void CWriter::printFPConstantValue(raw_ostream &Out, const ConstantFP *FPC,
+                                   enum OperandContext Context) {
+  if (Context == ContextStatic) {
     // Print in decimal form.
     // It can be used in constexpr but may result in precision loss.
     double V;
@@ -2450,7 +2463,7 @@ void CWriter::visitReturnInst(ReturnInst &I) {
   Out << "  return";
   if (I.getNumOperands()) {
     Out << ' ';
-    writeOperand(I.getOperand(0), ContextCasted);
+    writeOperand(I.getOperand(0));
   }
   Out << ";\n";
 }
@@ -2544,7 +2557,7 @@ void CWriter::printPHICopiesForSuccessor(BasicBlock *CurBlock,
     if (!isa<UndefValue>(IV) && !isEmptyType(IV->getType())) {
       Out << std::string(Indent, ' ');
       Out << "  " << GetValueName(&*I) << "__PHI_TEMPORARY = ";
-      writeOperand(IV, ContextCasted);
+      writeOperand(IV);
       Out << ";   /* for PHI node */\n";
     }
   }
@@ -2567,7 +2580,7 @@ void CWriter::visitBranchInst(BranchInst &I) {
   if (I.isConditional()) {
     if (isGotoCodeNecessary(I.getParent(), I.getSuccessor(0))) {
       Out << "  if (";
-      writeOperand(I.getCondition(), ContextCasted);
+      writeOperand(I.getCondition());
       Out << ") {\n";
 
       printPHICopiesForSuccessor(I.getParent(), I.getSuccessor(0), 2);
@@ -2581,7 +2594,7 @@ void CWriter::visitBranchInst(BranchInst &I) {
     } else {
       // First goto not necessary, assume second one is...
       Out << "  if (!";
-      writeOperand(I.getCondition(), ContextCasted);
+      writeOperand(I.getCondition());
       Out << ") {\n";
 
       printPHICopiesForSuccessor(I.getParent(), I.getSuccessor(1), 2);
@@ -2638,21 +2651,21 @@ void CWriter::visitBinaryOperator(BinaryOperator &I) {
       Out << "llvm_neg_";
       printTypeString(Out, Ty);
       Out << "(";
-      writeOperand(X, ContextCasted);
+      writeOperand(X);
     } else if (match(&I, m_Not(m_Value(X)))) {
       opcode = BinaryNot;
       Out << "llvm_not_";
       printTypeString(Out, Ty);
       Out << "(";
-      writeOperand(X, ContextCasted);
+      writeOperand(X);
     } else {
       opcode = I.getOpcode();
       Out << "llvm_" << Instruction::getOpcodeName(opcode) << "_";
       printTypeString(Out, Ty);
       Out << "(";
-      writeOperand(I.getOperand(0), ContextCasted);
+      writeOperand(I.getOperand(0));
       Out << ", ";
-      writeOperand(I.getOperand(1), ContextCasted);
+      writeOperand(I.getOperand(1));
     }
     Out << ")";
     InlineOpDeclTypes.insert(std::pair<unsigned, Type *>(opcode, Ty));
@@ -2677,9 +2690,9 @@ void CWriter::visitBinaryOperator(BinaryOperator &I) {
   } else if (I.getOpcode() == Instruction::FRem) {
     // Output a call to `fmod` instead of emitting a%b
     Out << "fmod(";
-    writeOperand(I.getOperand(0), ContextCasted);
+    writeOperand(I.getOperand(0));
     Out << ", ";
-    writeOperand(I.getOperand(1), ContextCasted);
+    writeOperand(I.getOperand(1));
     Out << ")";
   } else {
 
@@ -2750,9 +2763,9 @@ void CWriter::visitICmpInst(ICmpInst &I) {
   Out << "llvm_icmp_" << getCmpPredicateName(I.getPredicate()) << "_";
   printTypeString(Out, I.getOperand(0)->getType());
   Out << "(";
-  writeOperand(I.getOperand(0), ContextCasted);
+  writeOperand(I.getOperand(0));
   Out << ", ";
-  writeOperand(I.getOperand(1), ContextCasted);
+  writeOperand(I.getOperand(1));
   Out << ")";
 
   CmpDeclTypes.insert(
@@ -2770,9 +2783,9 @@ void CWriter::visitFCmpInst(FCmpInst &I) {
   Out << "llvm_fcmp_" << getCmpPredicateName(I.getPredicate()) << "_";
   printTypeString(Out, I.getOperand(0)->getType());
   Out << "(";
-  writeOperand(I.getOperand(0), ContextCasted);
+  writeOperand(I.getOperand(0));
   Out << ", ";
-  writeOperand(I.getOperand(1), ContextCasted);
+  writeOperand(I.getOperand(1));
   Out << ")";
 
   CmpDeclTypes.insert(
@@ -2816,7 +2829,7 @@ void CWriter::visitCastInst(CastInst &I) {
     Out << "_";
     printTypeString(Out, DstTy);
     Out << "(";
-    writeOperand(I.getOperand(0), ContextCasted);
+    writeOperand(I.getOperand(0));
     Out << ")";
     CastOpDeclTypes.insert(
         std::pair<Instruction::CastOps, std::pair<Type *, Type *>>(
@@ -2829,7 +2842,7 @@ void CWriter::visitCastInst(CastInst &I) {
     // These int<->float and long<->double casts need to be handled specially
     Out << GetValueName(&I) << "__BITCAST_TEMPORARY."
         << getFloatBitCastField(I.getOperand(0)->getType()) << " = ";
-    writeOperand(I.getOperand(0), ContextCasted);
+    writeOperand(I.getOperand(0));
     Out << ", " << GetValueName(&I) << "__BITCAST_TEMPORARY."
         << getFloatBitCastField(I.getType());
     Out << ')';
@@ -2844,7 +2857,7 @@ void CWriter::visitCastInst(CastInst &I) {
       I.getOpcode() == Instruction::SExt)
     Out << "0-";
 
-  writeOperand(I.getOperand(0), ContextCasted);
+  writeOperand(I.getOperand(0));
 
   if (DstTy == Type::getInt1Ty(I.getContext()) &&
       (I.getOpcode() == Instruction::Trunc ||
@@ -2863,11 +2876,11 @@ void CWriter::visitSelectInst(SelectInst &I) {
   Out << "llvm_select_";
   printTypeString(Out, I.getType());
   Out << "(";
-  writeOperand(I.getCondition(), ContextCasted);
+  writeOperand(I.getCondition());
   Out << ", ";
-  writeOperand(I.getTrueValue(), ContextCasted);
+  writeOperand(I.getTrueValue());
   Out << ", ";
-  writeOperand(I.getFalseValue(), ContextCasted);
+  writeOperand(I.getFalseValue());
   Out << ")";
   SelectDeclTypes.insert(I.getType());
   cwriter_assert(
@@ -3284,7 +3297,7 @@ void CWriter::visitCallInst(CallInst &I) {
                   false, std::make_pair(PAL, I.getCallingConv()));
     Out << "*)(void*)";
   }
-  writeOperand(Callee, ContextCasted);
+  writeOperand(Callee);
   if (NeedsCast)
     Out << ')';
 
@@ -3320,7 +3333,7 @@ void CWriter::visitCallInst(CallInst &I) {
     if (I.getAttributes().hasAttribute(ArgNo + 1, Attribute::ByVal))
       writeOperandDeref(*AI);
     else
-      writeOperand(*AI, ContextCasted);
+      writeOperand(*AI);
     PrintedArg = true;
   }
   Out << ')';
@@ -3528,7 +3541,7 @@ void CWriter::visitStoreInst(StoreInst &I) {
       BitMask = ITy->getBitMask();
   if (BitMask)
     Out << "((";
-  writeOperand(Operand, BitMask ? ContextNormal : ContextCasted);
+  writeOperand(Operand);
   if (BitMask)
     Out << ") & " << BitMask << ")";
 }
@@ -3571,7 +3584,7 @@ void CWriter::visitVAArgInst(VAArgInst &I) {
   CurInstr = &I;
 
   Out << "va_arg(*(va_list*)";
-  writeOperand(I.getOperand(0), ContextCasted);
+  writeOperand(I.getOperand(0));
   Out << ", ";
   printTypeName(Out, I.getType());
   Out << ");\n ";
@@ -3605,7 +3618,7 @@ void CWriter::visitInsertElementInst(InsertElementInst &I) {
   }
   printVectorComponent(Out, index);
   Out << " = ";
-  writeOperand(I.getOperand(1), ContextCasted);
+  writeOperand(I.getOperand(1));
 }
 
 void CWriter::visitExtractElementInst(ExtractElementInst &I) {
@@ -3663,7 +3676,7 @@ void CWriter::visitShuffleVectorInst(ShuffleVectorInst &SVI) {
     int SrcVal = SVI.getMaskValue(i);
     if ((unsigned)SrcVal >= NumInputElts * 2) {
       Out << "/*undef*/";
-      printConstant(Zero, ContextCasted);
+      printConstant(Zero);
     } else {
       // If SrcVal belongs [0, n - 1], it extracts value from <v1>
       // If SrcVal belongs [n, 2 * n - 1], it extracts value from <v2>
@@ -3679,7 +3692,7 @@ void CWriter::visitShuffleVectorInst(ShuffleVectorInst &SVI) {
           ((unsigned)SrcVal >= NumInputElts ? SrcVal - NumInputElts : SrcVal)
         );
       } else if (isa<ConstantAggregateZero>(Op) || isa<UndefValue>(Op)) {
-        printConstant(Zero, ContextCasted);
+        printConstant(Zero);
       } else {
         printConstant(
             cast<ConstantVector>(Op)->getOperand(SrcVal & (NumElts - 1)),
@@ -3713,7 +3726,7 @@ void CWriter::visitInsertValueInst(InsertValueInst &IVI) {
       Out << ".field" << *i;
   }
   Out << " = ";
-  writeOperand(IVI.getOperand(1), ContextCasted);
+  writeOperand(IVI.getOperand(1));
 }
 
 void CWriter::visitExtractValueInst(ExtractValueInst &EVI) {
