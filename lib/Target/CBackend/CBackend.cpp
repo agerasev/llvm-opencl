@@ -3383,9 +3383,12 @@ void CWriter::printGEPExpression(Value *Ptr, gep_type_iterator I,
   // Find out if the last index is into a vector.  If so, we have to print this
   // specially.  Since vectors can't have elements of indexable type, only the
   // last index could possibly be of a vector element.
-  VectorType *LastIndexIsVector = 0;
+  // TODO_: Maybe pull-request this fix into original `llvm-cbe`?
+  VectorType *LastButOneIndexIsVector = nullptr;
   {
+    VectorType *LastIndexIsVector = nullptr;
     for (gep_type_iterator TmpI = I; TmpI != E; ++TmpI) {
+      LastButOneIndexIsVector = LastIndexIsVector;
       LastIndexIsVector = dyn_cast<VectorType>(TmpI.getIndexedType());
     }
   }
@@ -3397,10 +3400,10 @@ void CWriter::printGEPExpression(Value *Ptr, gep_type_iterator I,
   // (((float*)&a[i])+j)
   // TODO: this is no longer true now that we don't represent vectors using
   // gcc-extentions
-  if (LastIndexIsVector) {
+  if (LastButOneIndexIsVector) {
     Out << "((";
     printTypeName(Out,
-                  PointerType::getUnqual(LastIndexIsVector->getElementType()));
+                  PointerType::getUnqual(LastButOneIndexIsVector->getElementType()));
     Out << ")(";
   }
 
@@ -3455,7 +3458,7 @@ void CWriter::printGEPExpression(Value *Ptr, gep_type_iterator I,
       Out << ']';
     } else {
       // If the last index is into a vector, then print it out as "+j)".  This
-      // works with the 'LastIndexIsVector' code above.
+      // works with the 'LastButOneIndexIsVector' code above.
       if (isa<Constant>(I.getOperand()) &&
           cast<Constant>(I.getOperand())->isNullValue()) {
         //Out << "))"; // avoid "+0".
@@ -3469,7 +3472,7 @@ void CWriter::printGEPExpression(Value *Ptr, gep_type_iterator I,
     IntoT = I.getIndexedType();
   }
 
-  if (LastIndexIsVector) {
+  if (LastButOneIndexIsVector) {
     Out << "))";
   }
   Out << ")";
