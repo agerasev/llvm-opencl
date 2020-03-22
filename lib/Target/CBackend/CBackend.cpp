@@ -1528,20 +1528,11 @@ void CWriter::generateHeader(Module &M) {
           isEmptyType(I->getType()->getPointerElementType()))
         continue;
 
-      if (I->hasDLLImportStorageClass())
-        Out << "__declspec(dllimport) ";
-      else if (I->hasDLLExportStorageClass())
-        Out << "__declspec(dllexport) ";
-
       if (I->hasExternalLinkage() || I->hasExternalWeakLinkage() ||
           I->hasCommonLinkage())
         Out << "extern ";
       else
         continue; // Internal Global
-
-      // Thread Local Storage
-      if (I->isThreadLocal())
-        Out << "__thread ";
 
       Type *ElTy = I->getType()->getElementType();
       unsigned Alignment = I->getAlignment();
@@ -3180,16 +3171,6 @@ bool CWriter::lowerIntrinsics(Function &F) {
         if (Function *F = CI->getCalledFunction()) {
           switch (F->getIntrinsicID()) {
           case Intrinsic::not_intrinsic:
-          case Intrinsic::vastart:
-          case Intrinsic::vacopy:
-          case Intrinsic::vaend:
-          case Intrinsic::returnaddress:
-          case Intrinsic::frameaddress:
-          case Intrinsic::setjmp:
-          case Intrinsic::longjmp:
-          case Intrinsic::sigsetjmp:
-          case Intrinsic::siglongjmp:
-          case Intrinsic::prefetch:
           case Intrinsic::uadd_with_overflow:
           case Intrinsic::sadd_with_overflow:
           case Intrinsic::usub_with_overflow:
@@ -3210,8 +3191,6 @@ bool CWriter::lowerIntrinsics(Function &F) {
           case Intrinsic::rint:
           case Intrinsic::sqrt:
           case Intrinsic::trunc:
-          case Intrinsic::trap:
-          case Intrinsic::stackprotector:
           case Intrinsic::dbg_value:
           case Intrinsic::dbg_declare:
             // We directly implement these intrinsics
@@ -3331,18 +3310,6 @@ void CWriter::visitCallInst(CallInst &I) {
     ++ArgNo;
   }
 
-  Function *F = I.getCalledFunction();
-  if (F) {
-    StringRef Name = F->getName();
-    // emit cast for the first argument to type expected by header prototype
-    // the jmp_buf type is an array, so the array-to-pointer decay adds the
-    // strange extra *'s
-    if (Name == "sigsetjmp")
-      Out << "*(sigjmp_buf*)";
-    else if (Name == "setjmp")
-      Out << "*(jmp_buf*)";
-  }
-
   for (; AI != AE; ++AI, ++ArgNo) {
     if (PrintedArg)
       Out << ", ";
@@ -3373,13 +3340,6 @@ bool CWriter::visitBuiltinCall(CallInst &I, Intrinsic::ID ID) {
   case Intrinsic::dbg_value:
   case Intrinsic::dbg_declare:
     return true; // ignore these intrinsics
-  case Intrinsic::stacksave:
-    return true;
-  case Intrinsic::stackprotector:
-    writeOperandDeref(I.getArgOperand(1));
-    Out << " = ";
-    writeOperand(I.getArgOperand(0), ContextCasted);
-    return true;
   case Intrinsic::uadd_with_overflow:
   case Intrinsic::sadd_with_overflow:
   case Intrinsic::usub_with_overflow:
@@ -3399,33 +3359,18 @@ bool CWriter::visitBuiltinCall(CallInst &I, Intrinsic::ID ID) {
   case Intrinsic::powi:
   case Intrinsic::rint:
   case Intrinsic::sqrt:
-  case Intrinsic::trap:
   case Intrinsic::trunc:
     return false; // these use the normal function call emission
-  case Intrinsic::vastart:
-  case Intrinsic::vaend:
-  case Intrinsic::vacopy:
-  case Intrinsic::returnaddress:
-  case Intrinsic::frameaddress:
-  case Intrinsic::setjmp:
-  case Intrinsic::longjmp:
-  case Intrinsic::sigsetjmp:
-  case Intrinsic::siglongjmp:
-  case Intrinsic::prefetch:
+  default:
 #ifndef NDEBUG
     errs() << "Unsupported LLVM intrinsic! " << I << "\n";
 #endif
-    errorWithMessage("unknown llvm instrinsic");
-    return false;
-  default:
-#ifndef NDEBUG
-    errs() << "Unknown LLVM intrinsic! " << I << "\n";
-#endif
-    errorWithMessage("unknown llvm instrinsic");
+    errorWithMessage("Unsupported llvm instrinsic");
     return false;
   }
 }
 
+// TODO_: Explicitly cast vector pointer to scalar pointer
 void CWriter::printGEPExpression(Value *Ptr, gep_type_iterator I,
                                  gep_type_iterator E) {
 
@@ -3440,8 +3385,9 @@ void CWriter::printGEPExpression(Value *Ptr, gep_type_iterator I,
   // last index could possibly be of a vector element.
   VectorType *LastIndexIsVector = 0;
   {
-    for (gep_type_iterator TmpI = I; TmpI != E; ++TmpI)
+    for (gep_type_iterator TmpI = I; TmpI != E; ++TmpI) {
       LastIndexIsVector = dyn_cast<VectorType>(TmpI.getIndexedType());
+    }
   }
 
   Out << "(";
