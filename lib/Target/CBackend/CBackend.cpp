@@ -1098,6 +1098,7 @@ std::string CWriter::GetValueName(Value *Operand) {
     Operand = GA->getAliasee();
   }
 
+  // TODO_: How to remove `_OC_` from the Name?
   std::string Name = Operand->getName();
   if (Name.empty()) { // Assign unique names to local temporaries.
     unsigned No = AnonValueNumbers.getOrInsert(Operand);
@@ -1560,26 +1561,9 @@ void CWriter::generateHeader(Module &M) {
       switch (I->getIntrinsicID()) {
       default:
         continue;
-      case Intrinsic::uadd_with_overflow:
-      case Intrinsic::sadd_with_overflow:
-      case Intrinsic::usub_with_overflow:
-      case Intrinsic::ssub_with_overflow:
-      case Intrinsic::umul_with_overflow:
-      case Intrinsic::smul_with_overflow:
-      case Intrinsic::bswap:
-      case Intrinsic::ceil:
-      case Intrinsic::ctlz:
-      case Intrinsic::ctpop:
-      case Intrinsic::cttz:
-      case Intrinsic::fabs:
-      case Intrinsic::floor:
-      case Intrinsic::fma:
-      case Intrinsic::fmuladd:
-      case Intrinsic::pow:
-      case Intrinsic::powi:
-      case Intrinsic::rint:
-      case Intrinsic::sqrt:
-      case Intrinsic::trunc:
+      case Intrinsic::memset:
+      case Intrinsic::memcpy:
+      case Intrinsic::memmove:
         intrinsicsToDefine.push_back(&*I);
         continue;
       }
@@ -2151,6 +2135,7 @@ void CWriter::printFPConstantValue(raw_ostream &Out, const ConstantFP *FPC,
   }
 }
 
+// TODO_: Replace with `as_type()`
 static void defineBitCastUnion(raw_ostream &Out) {
   Out << "/* Helper union for bitcasts */\n";
   Out << "typedef union {\n";
@@ -2888,71 +2873,12 @@ void CWriter::visitSelectInst(SelectInst &I) {
       I.getType()->isVectorTy()); // TODO: might be scalarty == vectorty
 }
 
-// Returns the macro name or value of the max or min of an integer type
-// (as defined in limits.h).
-static void printLimitValue(IntegerType &Ty, bool isSigned, bool isMax,
-                            raw_ostream &Out) {
-  const char *type;
-  const char *sprefix = "";
-
-  unsigned NumBits = Ty.getBitWidth();
-  if (NumBits <= 8) {
-    type = "CHAR";
-    sprefix = "S";
-  } else if (NumBits <= 16) {
-    type = "SHRT";
-  } else if (NumBits <= 32) {
-    type = "INT";
-  } else if (NumBits <= 64) {
-    type = "LLONG";
-  } else {
-    llvm_unreachable("Bit widths > 64 not implemented yet");
-  }
-
-  if (isSigned)
-    Out << sprefix << type << (isMax ? "_MAX" : "_MIN");
-  else
-    Out << "U" << type << (isMax ? "_MAX" : "0");
-}
-
-#ifndef NDEBUG
-static bool isSupportedIntegerSize(IntegerType &T) {
-  return T.getBitWidth() == 8 || T.getBitWidth() == 16 ||
-         T.getBitWidth() == 32 || T.getBitWidth() == 64 ||
-         T.getBitWidth() == 128;
-}
-#endif
-
 void CWriter::printIntrinsicDefinition(FunctionType *funT, unsigned Opcode,
                                        std::string OpName, raw_ostream &Out) {
   Type *retT = funT->getReturnType();
-  Type *elemT = funT->getParamType(0);
-  IntegerType *elemIntT = dyn_cast<IntegerType>(elemT);
-  char i, numParams = funT->getNumParams();
-  bool isSigned;
-  switch (Opcode) {
-  default:
-    isSigned = false;
-    break;
-  case Intrinsic::sadd_with_overflow:
-  case Intrinsic::ssub_with_overflow:
-  case Intrinsic::smul_with_overflow:
-    isSigned = true;
-    break;
-  }
-  cwriter_assert(numParams > 0 && numParams < 26);
+  int numParams = funT->getNumParams();
 
-  if (isa<VectorType>(retT)) {
-    // this looks general, but is only actually used for ctpop, ctlz, cttz
-    Type **devecFunParams = (Type **)alloca(sizeof(Type *) * numParams);
-    for (i = 0; i < numParams; i++) {
-      devecFunParams[(int)i] = funT->params()[(int)i]->getScalarType();
-    }
-    FunctionType *devecFunT = FunctionType::get(
-        funT->getReturnType()->getScalarType(),
-        makeArrayRef(devecFunParams, numParams), funT->isVarArg());
-    printIntrinsicDefinition(devecFunT, Opcode, OpName + "_devec", Out);
-  }
+  cwriter_assert(numParams > 0 && numParams < 26);
 
   // static Rty _llvm_op_ixx(unsigned ixx a, unsigned ixx b) {
   //   Rty r;
@@ -2964,201 +2890,35 @@ void CWriter::printIntrinsicDefinition(FunctionType *funT, unsigned Opcode,
   Out << " ";
   Out << OpName;
   Out << "(";
-  for (i = 0; i < numParams; i++) {
-    switch (Opcode) {
-    // optional intrinsic validity cwriter_assertion checks
-    default:
-      // default case: assume all parameters must have the same type
-      cwriter_assert(elemT == funT->getParamType(i));
-      break;
-    case Intrinsic::ctlz:
-    case Intrinsic::cttz:
-    case Intrinsic::powi:
-      break;
-    }
-    printTypeName(Out, funT->getParamType(i), isSigned);
+  for (int i = 0; i < numParams; i++) {
+    printTypeName(Out, funT->getParamType(i));
     Out << " " << (char)('a' + i);
     if (i != numParams - 1)
       Out << ", ";
   }
-  Out << ") {\n  ";
-  printTypeName(Out, retT);
-  Out << " r;\n";
+  Out << ") {\n";
 
-  if (isa<VectorType>(retT)) {
-    for (i = 0; i < numParams; i++) {
-      Out << "  r.";
-      printVectorComponent(Out, (int)i);
-      Out << OpName << "_devec(";
-      for (char j = 0; j < numParams; j++) {
-        Out << (char)('a' + j);
-        if (isa<VectorType>(funT->params()[j]))
-          Out << ".";
-          printVectorComponent(Out, (int)i);
-        if (j != numParams - 1)
-          Out << ", ";
-      }
-      Out << ");\n";
-    }
-  } else if (elemIntT) {
-    // handle integer ops
-    cwriter_assert(isSupportedIntegerSize(*elemIntT) &&
-                   "CBackend does not support arbitrary size integers.");
-    switch (Opcode) {
-    default:
+  switch (Opcode) {
+  case Intrinsic::memset:
+    Out << "  for (uint i = 0; i < c; ++i) {\n"
+        << "    a[i] = b;\n"
+        << "  }\n";
+    break;
+  case Intrinsic::memcpy:
+  case Intrinsic::memmove:
+    // TODO_: Properly implement memmove
+    Out << "  for (uint i = 0; i < c; ++i) {\n"
+        << "    a[i] = b[i];\n"
+        << "  }\n";
+    break;
+  default:
 #ifndef NDEBUG
-      errs() << "Unsupported Intrinsic!" << Opcode << "\n";
+    errs() << "Unsupported Intrinsic!" << Opcode << "\n";
 #endif
-      errorWithMessage("unsupported instrinsic");
-
-    case Intrinsic::uadd_with_overflow:
-      //   r.field0 = a + b;
-      //   r.field1 = (r.field0 < a);
-      cwriter_assert(cast<StructType>(retT)->getElementType(0) == elemT);
-      Out << "  r.field0 = a + b;\n";
-      Out << "  r.field1 = (a >= -b);\n";
-      break;
-
-    case Intrinsic::sadd_with_overflow:
-      //   r.field0 = a + b;
-      //   r.field1 = (b > 0 && a > XX_MAX - b) ||
-      //              (b < 0 && a < XX_MIN - b);
-      cwriter_assert(cast<StructType>(retT)->getElementType(0) == elemT);
-      Out << "  r.field0 = a + b;\n";
-      Out << "  r.field1 = (b >= 0 ? a > ";
-      printLimitValue(*elemIntT, true, true, Out);
-      Out << " - b : a < ";
-      printLimitValue(*elemIntT, true, false, Out);
-      Out << " - b);\n";
-      break;
-
-    case Intrinsic::usub_with_overflow:
-      cwriter_assert(cast<StructType>(retT)->getElementType(0) == elemT);
-      Out << "  r.field0 = a - b;\n";
-      Out << "  r.field1 = (a < b);\n";
-      break;
-
-    case Intrinsic::ssub_with_overflow:
-      cwriter_assert(cast<StructType>(retT)->getElementType(0) == elemT);
-      Out << "  r.field0 = a - b;\n";
-      Out << "  r.field1 = (b <= 0 ? a > ";
-      printLimitValue(*elemIntT, true, true, Out);
-      Out << " + b : a < ";
-      printLimitValue(*elemIntT, true, false, Out);
-      Out << " + b);\n";
-      break;
-
-    case Intrinsic::umul_with_overflow:
-      cwriter_assert(cast<StructType>(retT)->getElementType(0) == elemT);
-      Out << "  r.field1 = LLVMMul_uov(8 * sizeof(a), &a, &b, &r.field0);\n";
-      break;
-
-    case Intrinsic::smul_with_overflow:
-      cwriter_assert(cast<StructType>(retT)->getElementType(0) == elemT);
-      Out << "  r.field1 = LLVMMul_sov(8 * sizeof(a), &a, &b, &r.field0);\n";
-      break;
-
-    case Intrinsic::bswap:
-      cwriter_assert(retT == elemT);
-      Out << "  LLVMFlipAllBits(8 * sizeof(a), &a, &r);\n";
-      break;
-
-    case Intrinsic::ctpop:
-      cwriter_assert(retT == elemT);
-      Out << "  r = ";
-      if (retT->getPrimitiveSizeInBits() > 64)
-        Out << "llvm_ctor_u128(0, ";
-      Out << "LLVMCountPopulation(8 * sizeof(a), &a)";
-      if (retT->getPrimitiveSizeInBits() > 64)
-        Out << ")";
-      Out << ";\n";
-      break;
-
-    case Intrinsic::ctlz:
-      cwriter_assert(retT == elemT);
-      Out << "  (void)b;\n  r = ";
-      if (retT->getPrimitiveSizeInBits() > 64)
-        Out << "llvm_ctor_u128(0, ";
-      Out << "LLVMCountLeadingZeros(8 * sizeof(a), &a)";
-      if (retT->getPrimitiveSizeInBits() > 64)
-        Out << ")";
-      Out << ";\n";
-      break;
-
-    case Intrinsic::cttz:
-      cwriter_assert(retT == elemT);
-      Out << "  (void)b;\n  r = ";
-      if (retT->getPrimitiveSizeInBits() > 64)
-        Out << "llvm_ctor_u128(0, ";
-      Out << "LLVMCountTrailingZeros(8 * sizeof(a), &a)";
-      if (retT->getPrimitiveSizeInBits() > 64)
-        Out << ")";
-      Out << ";\n";
-      break;
-    }
-
-  } else {
-    // handle FP ops
-    const char *suffix;
-    cwriter_assert(retT == elemT);
-    if (elemT->isFloatTy() || elemT->isHalfTy()) {
-      suffix = "f";
-    } else if (elemT->isDoubleTy()) {
-      suffix = "";
-    } else {
-#ifndef NDEBUG
-      errs() << "Unsupported Intrinsic!" << Opcode << "\n";
-#endif
-      errorWithMessage("unsupported instrinsic");
-    }
-
-    switch (Opcode) {
-    default:
-#ifndef NDEBUG
-      errs() << "Unsupported Intrinsic!" << Opcode << "\n";
-#endif
-      errorWithMessage("unsupported instrinsic");
-
-    case Intrinsic::ceil:
-      Out << "  r = ceil" << suffix << "(a);\n";
-      break;
-
-    case Intrinsic::fabs:
-      Out << "  r = fabs" << suffix << "(a);\n";
-      break;
-
-    case Intrinsic::floor:
-      Out << "  r = floor" << suffix << "(a);\n";
-      break;
-
-    case Intrinsic::fma:
-      Out << "  r = fma" << suffix << "(a, b, c);\n";
-      break;
-
-    case Intrinsic::fmuladd:
-      Out << "  r = a * b + c;\n";
-      break;
-
-    case Intrinsic::pow:
-    case Intrinsic::powi:
-      Out << "  r = pow" << suffix << "(a, b);\n";
-      break;
-
-    case Intrinsic::rint:
-      Out << "  r = rint" << suffix << "(a);\n";
-      break;
-
-    case Intrinsic::sqrt:
-      Out << "  r = sqrt" << suffix << "(a);\n";
-      break;
-
-    case Intrinsic::trunc:
-      Out << "  r = trunc" << suffix << "(a);\n";
-      break;
-    }
+    errorWithMessage("unsupported instrinsic");
   }
 
-  Out << "  return r;\n}\n";
+  Out << "\n}\n";
 }
 
 void CWriter::printIntrinsicDefinition(Function &F, raw_ostream &Out) {
@@ -3179,28 +2939,11 @@ bool CWriter::lowerIntrinsics(Function &F) {
         if (Function *F = CI->getCalledFunction()) {
           switch (F->getIntrinsicID()) {
           case Intrinsic::not_intrinsic:
-          case Intrinsic::uadd_with_overflow:
-          case Intrinsic::sadd_with_overflow:
-          case Intrinsic::usub_with_overflow:
-          case Intrinsic::ssub_with_overflow:
-          case Intrinsic::umul_with_overflow:
-          case Intrinsic::smul_with_overflow:
-          case Intrinsic::bswap:
-          case Intrinsic::ceil:
-          case Intrinsic::ctlz:
-          case Intrinsic::ctpop:
-          case Intrinsic::cttz:
-          case Intrinsic::fabs:
-          case Intrinsic::floor:
-          case Intrinsic::fma:
-          case Intrinsic::fmuladd:
-          case Intrinsic::pow:
-          case Intrinsic::powi:
-          case Intrinsic::rint:
-          case Intrinsic::sqrt:
-          case Intrinsic::trunc:
           case Intrinsic::dbg_value:
           case Intrinsic::dbg_declare:
+          case Intrinsic::memset:
+          case Intrinsic::memcpy:
+          case Intrinsic::memmove:
             // We directly implement these intrinsics
             break;
 
@@ -3348,26 +3091,9 @@ bool CWriter::visitBuiltinCall(CallInst &I, Intrinsic::ID ID) {
   case Intrinsic::dbg_value:
   case Intrinsic::dbg_declare:
     return true; // ignore these intrinsics
-  case Intrinsic::uadd_with_overflow:
-  case Intrinsic::sadd_with_overflow:
-  case Intrinsic::usub_with_overflow:
-  case Intrinsic::ssub_with_overflow:
-  case Intrinsic::umul_with_overflow:
-  case Intrinsic::smul_with_overflow:
-  case Intrinsic::bswap:
-  case Intrinsic::ceil:
-  case Intrinsic::ctlz:
-  case Intrinsic::ctpop:
-  case Intrinsic::cttz:
-  case Intrinsic::fabs:
-  case Intrinsic::floor:
-  case Intrinsic::fma:
-  case Intrinsic::fmuladd:
-  case Intrinsic::pow:
-  case Intrinsic::powi:
-  case Intrinsic::rint:
-  case Intrinsic::sqrt:
-  case Intrinsic::trunc:
+  case Intrinsic::memset:
+  case Intrinsic::memcpy:
+  case Intrinsic::memmove:
     return false; // these use the normal function call emission
   default:
 #ifndef NDEBUG
