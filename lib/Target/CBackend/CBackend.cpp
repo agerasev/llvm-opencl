@@ -868,13 +868,13 @@ void CWriter::printCast(unsigned opc, Type *SrcTy, Type *DstTy) {
   }
 }
 
-// TODO_: Do we need all this functionality for OpenCL?
 // printConstant - The LLVM Constant to C Constant converter.
 void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(CPV)) {
     errorWithMessage("Constant expressions is not supported");
   } else if (isa<UndefValue>(CPV) && CPV->getType()->isSingleValueType()) {
     if (CPV->getType()->isVectorTy()) {
+      // TODO_: Check this branch
       if (Context == ContextStatic) {
         Out << "{}";
         return;
@@ -2630,32 +2630,32 @@ void CWriter::visitBinaryOperator(BinaryOperator &I) {
   opcodeNeedsCast(I.getOpcode(), shouldCast, castIsSigned);
 
   if (I.getType()->isVectorTy() || needsCast || shouldCast) {
-    Type *VTy = I.getOperand(0)->getType();
+    Type *Ty = I.getOperand(0)->getType();
     unsigned opcode;
     Value *X;
     if (match(&I, m_Neg(m_Value(X))) || match(&I, m_FNeg(m_Value(X)))) {
       opcode = BinaryNeg;
       Out << "llvm_neg_";
-      printTypeString(Out, VTy);
+      printTypeString(Out, Ty);
       Out << "(";
       writeOperand(X, ContextCasted);
     } else if (match(&I, m_Not(m_Value(X)))) {
       opcode = BinaryNot;
       Out << "llvm_not_";
-      printTypeString(Out, VTy);
+      printTypeString(Out, Ty);
       Out << "(";
       writeOperand(X, ContextCasted);
     } else {
       opcode = I.getOpcode();
       Out << "llvm_" << Instruction::getOpcodeName(opcode) << "_";
-      printTypeString(Out, VTy);
+      printTypeString(Out, Ty);
       Out << "(";
       writeOperand(I.getOperand(0), ContextCasted);
       Out << ", ";
       writeOperand(I.getOperand(1), ContextCasted);
     }
     Out << ")";
-    InlineOpDeclTypes.insert(std::pair<unsigned, Type *>(opcode, VTy));
+    InlineOpDeclTypes.insert(std::pair<unsigned, Type *>(opcode, Ty));
     return;
   }
 
@@ -2675,13 +2675,8 @@ void CWriter::visitBinaryOperator(BinaryOperator &I) {
     writeOperand(X);
     Out << ")";
   } else if (I.getOpcode() == Instruction::FRem) {
-    // Output a call to fmod/fmodf instead of emitting a%b
-    if (I.getType() == Type::getFloatTy(I.getContext()))
-      Out << "fmodf(";
-    else if (I.getType() == Type::getDoubleTy(I.getContext()))
-      Out << "fmod(";
-    else // all 3 flavors of long double
-      Out << "fmodl(";
+    // Output a call to `fmod` instead of emitting a%b
+    Out << "fmod(";
     writeOperand(I.getOperand(0), ContextCasted);
     Out << ", ";
     writeOperand(I.getOperand(1), ContextCasted);
