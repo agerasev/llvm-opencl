@@ -13,7 +13,7 @@ def split_path(path):
     head, tail = os.path.split(path)
     return (split_path(head) if head else []) + [tail]
 
-def search_tests(basedir):
+def search_tests(basedir, ignore=["__pycache__"]):
     walker = sorted(list(os.walk(".")), key=lambda t: t[0])
 
     for dirpath, dirnames, filenames in walker:
@@ -21,9 +21,12 @@ def search_tests(basedir):
             continue
 
         dirlist = split_path(dirpath)[1:]
+        if any([d in ignore for d in dirlist]):
+            continue
 
-        if all([d.startswith("test_") for d in dirlist]):
-            yield (dirlist, dirnames, filenames)
+        dirnames = [d for d in dirnames if d not in ignore]
+
+        yield (dirlist, dirnames, filenames)
 
 
 if __name__ == "__main__":
@@ -39,22 +42,25 @@ if __name__ == "__main__":
         help="Index of OpenCL platform to run tests"
     )
     parser.add_argument(
-        "--opt", metavar="LEVEL", type=int, default=3,
-        help="Clang optimization level while generating IR. '3' by default."
+        "--opt", metavar="LEVEL", nargs='+', type=int, default=[3],
+        help="Clang optimization level while generating IR. `[3]` by default."
     )
     parser.add_argument(
         "--recurse", metavar="DEPTH", type=int, default=1,
         help="Recursively translate generated code."
     )
     parser.add_argument(
+        "--exit-on-failure", action="store_true",
+        help="Print information and exit on first occured test failure."
+    )
+    parser.add_argument(
         "--clean", action="store_true",
         help="Remove build and translation files."
     )
     args = parser.parse_args()
-    
 
     if args.clean:
-        for dirlist, dirnames, filenames in search_tests("."):
+        for dirlist, dirnames, filenames in search_tests(".", ignore=[]):
             for fn in filenames:
                 if any([fn.endswith(ext) for ext in (".ll", ".cbe.cl", ".cbe.c")]):
                     os.remove(os.path.join(*dirlist, fn))
@@ -63,6 +69,8 @@ if __name__ == "__main__":
                     shutil.rmtree(os.path.join(*dirlist, dn))
         exit()
 
+    if args.recurse > 1 and len(args.opt) > 1:
+        raise Exception("Cannot recurse with more than one optimization levels")
 
     args.tests = [p.split(".") for p in args.tests]
     os.environ["PYOPENCL_COMPILER_OUTPUT"] = "1"
@@ -77,6 +85,7 @@ if __name__ == "__main__":
         ctx = cl.Context(devices=[device])
 
 
+    passed, failed, warnings = 0, 0, 0
     for dirlist, dirnames, _ in search_tests("."):
         if args.tests:
             skip = False
@@ -94,23 +103,31 @@ if __name__ == "__main__":
         try:
             module = importlib.import_module(modpath)
             if not hasattr(module, "run"):
-                assert any([d.startswith("test_") for d in dirnames])
-                continue
-            ref = None
+                if len(dirnames) > 0:
+                    continue
+                else:
+                    print("[warn] no tests ran for {}".format(modpath))
             src = os.path.join(*dirlist, "source.cl")
-            for i in range(args.recurse + 1):
-                if i > 0:
-                    translate(src, O=args.opt)
-                    src += ".cbe.cl"
-                res = module.run(ctx, src)
-                if ref:
+            ref = module.run(ctx, src)
+            for i in range(args.recurse):
+                for opt in args.opt:
+                    dst = translate(src, opt=opt)
+                    res = module.run(ctx, dst)
                     for f, s in zip(ref, res):
                         assert np.allclose(f, s)
-                ref = res
+                src = dst
 
         except Exception as e:
-            print("[fail] {}".format(modpath))
-            print("src: {}".format(src))
-            raise
+            print("[fail] {} at '{}'".format(modpath, src))
+            failed += 1
+            if args.exit_on_failure:
+                raise
         else:
             print("[ok] {}".format(modpath))
+            passed += 1
+        
+    print("done, {} passed, {} failed".format(passed, failed), end="")
+    print(", {} warnings".format(warnings) if warnings > 0 else "")
+
+    if failed > 0:
+        exit(1)
