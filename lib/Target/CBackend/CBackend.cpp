@@ -2295,7 +2295,7 @@ void CWriter::printFunction(Function &F) {
       if (isa<PHINode>(*I)) { // Print out PHI node temporaries as well...
         Out << "  ";
         printTypeName(Out, I->getType(), false)
-            << ' ' << (GetValueName(&*I) + "__PHI_TEMPORARY");
+            << ' ' << (GetValueName(&*I) + "_phi");
         Out << ";\n";
       }
       PrintedVar = true;
@@ -2493,7 +2493,7 @@ void CWriter::printPHICopiesForSuccessor(BasicBlock *CurBlock,
     Value *IV = PN->getIncomingValueForBlock(CurBlock);
     if (!isa<UndefValue>(IV) && !isEmptyType(IV->getType())) {
       Out << std::string(Indent, ' ');
-      Out << "  " << GetValueName(&*I) << "__PHI_TEMPORARY = ";
+      Out << "  " << GetValueName(&*I) << "_phi = ";
       writeOperand(IV);
       Out << ";   /* for PHI node */\n";
     }
@@ -2553,7 +2553,7 @@ void CWriter::visitPHINode(PHINode &I) {
   CurInstr = &I;
 
   writeOperand(&I);
-  Out << "__PHI_TEMPORARY";
+  Out << "_phi";
 }
 
 void CWriter::visitBinaryOperator(BinaryOperator &I) {

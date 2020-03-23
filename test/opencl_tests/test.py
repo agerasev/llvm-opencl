@@ -4,10 +4,13 @@ import os, sys
 import shutil
 import importlib
 import argparse
+from subprocess import SubprocessError
+
 import numpy as np
 import pyopencl as cl
 
 from translate import translate
+
 
 def split_path(path):
     head, tail = os.path.split(path)
@@ -62,7 +65,7 @@ if __name__ == "__main__":
     if args.clean:
         for dirlist, dirnames, filenames in search_tests(".", ignore=[]):
             for fn in filenames:
-                if any([fn.endswith(ext) for ext in (".ll", ".cbe.cl", ".cbe.c")]):
+                if any([fn.endswith(ext) for ext in (".ll", ".cbe.cl", ".cbe.c", ".o0", ".o3")]):
                     os.remove(os.path.join(*dirlist, fn))
             for dn in dirnames:
                 if dn == "__pycache__":
@@ -100,25 +103,40 @@ if __name__ == "__main__":
                 continue
 
         modpath = ".".join(dirlist)
-        try:
-            module = importlib.import_module(modpath)
-            if not hasattr(module, "run"):
-                if len(dirnames) > 0:
-                    continue
-                else:
-                    print("[warn] no tests ran for {}".format(modpath))
-            src = os.path.join(*dirlist, "source.cl")
-            ref = module.run(ctx, src)
-            for i in range(args.recurse):
-                for opt in args.opt:
-                    dst = translate(src, opt=opt)
-                    res = module.run(ctx, dst)
-                    for f, s in zip(ref, res):
-                        assert np.allclose(f, s)
-                src = dst
+        
+        module = importlib.import_module(modpath)
+        if not hasattr(module, "run"):
+            if len(dirnames) == 0:
+                print("[warn] no tests ran for {}".format(modpath))
+                warnings += 1
+            continue
 
+        src = os.path.join(*dirlist, "source.cl")
+        try:
+            try:
+                ref = module.run(ctx, src)
+            except Exception as e:
+                raise Exception(src) from e
+
+            for i in range(args.recurse):
+                dst = None
+                for opt in args.opt:
+                    
+                    dst = translate(
+                        src, opt=opt,
+                        suffix=".o{}".format(opt)
+                    )
+
+                    res = module.run(ctx, dst)
+                    try:
+                        for f, s in zip(ref, res):
+                            assert np.allclose(f, s)
+                    except AssertionError as e:
+                        raise AssertionError(dst) from e
+
+                src = dst
         except Exception as e:
-            print("[fail] {} at '{}'".format(modpath, src))
+            print("[fail] {} at {}".format(modpath, e))
             failed += 1
             if args.exit_on_failure:
                 raise
