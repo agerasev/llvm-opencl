@@ -26,6 +26,7 @@
 #include "llvm/Support/TargetRegistry.h"
 
 #include "TopologicalSorter.h"
+#include "StringTools.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -174,23 +175,6 @@ bool CWriter::runOnFunction(Function &F) {
   return Modified;
 }
 
-static std::string CBEMangle(const std::string &S) {
-  std::string Result;
-
-  for (auto c : S) {
-    if (isalnum(c) || c == '_') {
-      Result += c;
-    } else {
-      Result += '_';
-      Result += 'A' + (c & 15);
-      Result += 'A' + ((c >> 4) & 15);
-      Result += '_';
-    }
-  }
-
-  return Result;
-}
-
 raw_ostream &CWriter::printTypeString(raw_ostream &Out, Type *Ty) {
   if (StructType *ST = dyn_cast<StructType>(Ty)) {
     cwriter_assert(!isEmptyType(ST));
@@ -248,7 +232,7 @@ raw_ostream &CWriter::printTypeString(raw_ostream &Out, Type *Ty) {
 std::string CWriter::getStructName(StructType *ST) {
   cwriter_assert(ST->getNumElements() != 0);
   if (!ST->isLiteral() && !ST->getName().empty())
-    return "struct l_struct_" + CBEMangle(ST->getName().str());
+    return "struct l_" + CBEMangle(ST->getName().str());
 
   unsigned id = UnnamedStructIDs.getOrInsert(ST);
   return "struct l_unnamed_" + utostr(id);
@@ -1077,7 +1061,6 @@ void CWriter::printConstantWithCast(Constant *CPV, unsigned Opcode) {
   bool shouldCast;
   bool typeIsSigned;
   opcodeNeedsCast(Opcode, shouldCast, typeIsSigned);
-  // TODO_: Examine `opcodeNeedsCast()`
 
   // Write out the casted constant if we should, otherwise just write the
   // operand.
@@ -1098,7 +1081,6 @@ std::string CWriter::GetValueName(Value *Operand) {
     Operand = GA->getAliasee();
   }
 
-  // TODO_: How to remove `_OC_` from the Name?
   std::string Name = Operand->getName();
   if (Name.empty()) { // Assign unique names to local temporaries.
     unsigned No = AnonValueNumbers.getOrInsert(Operand);
@@ -1113,26 +1095,11 @@ std::string CWriter::GetValueName(Value *Operand) {
     case 0:
       return CBEMangle(Name);
     case 1:
-      return "_builtin" + CBEMangle(Name);
+      return "builtin" + CBEMangle(Name);
     }
   }
 
-  std::string VarName;
-  VarName.reserve(Name.capacity());
-
-  for (std::string::iterator I = Name.begin(), E = Name.end(); I != E; ++I) {
-    unsigned char ch = *I;
-
-    if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
-          (ch >= '0' && ch <= '9') || ch == '_')) {
-      char buffer[5];
-      sprintf(buffer, "_%x_", ch);
-      VarName += buffer;
-    } else
-      VarName += ch;
-  }
-
-  return VarName;
+  return CBEMangle(Name);
 }
 
 /// writeInstComputationInline - Emit the computation for the specified
@@ -1507,8 +1474,6 @@ void CWriter::generateHeader(Module &M) {
     }
   }
 
-  Out << "\n\n/* Global Declarations */\n";
-
   // collect any remaining types
   raw_null_ostream NullOut;
   for (Module::global_iterator I = M.global_begin(), E = M.global_end(); I != E;
@@ -1520,51 +1485,24 @@ void CWriter::generateHeader(Module &M) {
   }
   printModuleTypes(Out);
 
-  // Global variable declarations...
-  if (!M.global_empty()) {
-    Out << "\n/* External Global Variable Declarations */\n";
-    for (Module::global_iterator I = M.global_begin(), E = M.global_end();
-         I != E; ++I) {
-      if (!I->isDeclaration() ||
-          isEmptyType(I->getType()->getPointerElementType()))
-        continue;
-
-      if (I->hasExternalLinkage() || I->hasExternalWeakLinkage() ||
-          I->hasCommonLinkage())
-        Out << "extern ";
-      else
-        continue; // Internal Global
-
-      Type *ElTy = I->getType()->getElementType();
-      unsigned Alignment = I->getAlignment();
-      bool IsOveraligned =
-          Alignment && Alignment > TD->getABITypeAlignment(ElTy);
-
-      printTypeName(Out, ElTy, false) << ' ' << GetValueName(&*I);
-      if (IsOveraligned)
-        Out << " __attribute__((aligned(" << Alignment << ")))";
-
-      Out << ";\n";
-    }
-  }
-
   // Function declarations
   Out << "\n/* Function Declarations */\n";
 
   // Store the intrinsics which will be declared/defined below.
   SmallVector<Function *, 16> intrinsicsToDefine;
 
+  // TODO_: Find out why non-intrinsic functions like `memset` are printed.
   for (Module::iterator I = M.begin(), E = M.end(); I != E; ++I) {
     // Don't print declarations for intrinsic functions.
     // Store the used intrinsics, which need to be explicitly defined.
     if (I->isIntrinsic()) {
       switch (I->getIntrinsicID()) {
-      default:
-        continue;
       case Intrinsic::memset:
       case Intrinsic::memcpy:
       case Intrinsic::memmove:
         intrinsicsToDefine.push_back(&*I);
+        continue;
+      default:
         continue;
       }
     }
@@ -1599,15 +1537,14 @@ void CWriter::generateHeader(Module &M) {
     }
     case 0:
       // Is not opencl built-in
-      Out << "// " << demangled.to_string(false) << "\n";
       if (I->hasLocalLinkage())
         Out << "static ";
-      if (I->hasExternalWeakLinkage())
-        Out << "extern ";
       printFunctionProto(Out, &*I);
       Out << ";\n";
       break;
     }
+
+    Out << "\n";
   }
 
   // Output the global variable definitions and contents...

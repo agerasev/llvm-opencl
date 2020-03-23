@@ -8,35 +8,11 @@
 
 #include "llvm/Demangle/Demangle.h"
 
+#include "StringTools.h"
+
 
 namespace llvm_cbe {
   using namespace llvm;
-
-  static void replace(std::string &str, const std::string &from, const std::string &to) {
-    size_t pos = 0;
-    for (;;) {
-      pos = str.find(from, pos);
-      if (pos == std::string::npos) {
-        break;
-      }
-      str.replace(pos, from.size(), to);
-      pos += to.size();
-    }
-  }
-
-  static std::vector<std::string> split(const std::string &str, const std::string &sep) {
-    std::vector<std::string> out;
-    size_t pos = 0;
-    while (pos < str.size()) {
-      size_t new_pos = str.find(sep, pos);
-      if (new_pos == std::string::npos) {
-        new_pos = str.size();
-      }
-      out.push_back(str.substr(pos, new_pos - pos));
-      pos = new_pos + sep.size();
-    }
-    return out;
-  }
 
   Func::Func() {}
   Func::Func(const std::string &ret, const std::string &name, const std::initializer_list<std::string> &args) :

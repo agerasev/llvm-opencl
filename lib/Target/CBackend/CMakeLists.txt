@@ -18,6 +18,7 @@ add_llvm_target(CBackendCodeGen
   CTargetMachine.cpp
   TopologicalSorter.cpp
   CLBuiltIns.cpp
+  StringTools.cpp
   )
 
 #set_source_files_properties(CBackend.cpp PROPERTIES COMPILE_FLAGS -g)
