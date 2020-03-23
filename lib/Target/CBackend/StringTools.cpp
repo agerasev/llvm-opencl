@@ -1,6 +1,15 @@
 #include "StringTools.h"
 
 namespace llvm_cbe {
+  OutModifier::OutModifier(std::string &out) : out(out) {
+    last_size = out.size();
+  }
+  std::string OutModifier::cut_tail() {
+    std::string tail = out.substr(last_size, out.size() - last_size);
+    out.resize(last_size);
+    return tail;
+  }
+
   std::string CBEMangle(const std::string &S) {
     std::string Result;
 

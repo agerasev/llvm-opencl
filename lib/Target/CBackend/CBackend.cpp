@@ -77,21 +77,6 @@ enum UnaryOps {
   }
 #endif
 
-// TODO_: Move to header. In general we need to split this enormous file.
-class OutModifier {
-public:
-  size_t last_size;
-  std::string &out;
-  OutModifier(std::string &out) : out(out) {
-    last_size = out.size();
-  }
-  std::string cut_tail() {
-    std::string tail = out.substr(last_size, out.size() - last_size);
-    out.resize(last_size);
-    return tail;
-  }
-};
-
 static bool isEmptyType(Type *Ty) {
   if (StructType *STy = dyn_cast<StructType>(Ty))
     return STy->getNumElements() == 0 ||
@@ -438,6 +423,36 @@ raw_ostream &CWriter::printSimpleType(raw_ostream &Out, Type *Ty,
     errs() << "Unknown primitive type: " << *Ty;
 #endif
     errorWithMessage("unknown primitive type");
+  }
+}
+
+void CWriter::printWithCast(
+  raw_ostream &Out, Type *DstTy, bool isSigned,
+  std::function<void()> print_inner
+) {
+  if (DstTy->isVectorTy()) {
+    Out << "convert_";
+    printTypeName(Out, DstTy, isSigned);
+    Out << "(";
+    print_inner();
+    Out << ")";
+  } else {
+    Out << "(";
+    printTypeName(Out, DstTy, isSigned);
+    Out << ")(";
+    print_inner();
+    Out << ")";
+  }
+}
+
+void CWriter::printWithCastIf(
+  raw_ostream &Out, Type *DstTy, bool isSigned,
+  std::function<void()> print_inner, bool cond
+) {
+  if (cond) {
+    printWithCast(Out, DstTy, isSigned, print_inner);
+  } else {
+    print_inner();
   }
 }
 
@@ -1485,8 +1500,8 @@ void CWriter::generateHeader(Module &M) {
   }
   printModuleTypes(Out);
 
-  // Function declarations
-  Out << "\n/* Function Declarations */\n";
+  // Function declarations and wrappers for OpenCL built-ins
+  Out << "\n/* Function Declarations and wrappers for OpenCL built-ins */\n";
 
   // Store the intrinsics which will be declared/defined below.
   SmallVector<Function *, 16> intrinsicsToDefine;
@@ -1682,33 +1697,26 @@ void CWriter::generateHeader(Module &M) {
     Out << " l, ";
     printTypeName(Out, Ty);
     Out << " r) {\n";
-    
-    std::string stype;
-    {
-      raw_string_ostream lout(stype);
-      printTypeName(lout, Ty, isSigned);
-      lout.str();
-    }
 
-    if (VTy) {
-      // Vector type
-      Out << "  " + stype + " sl = convert_" + stype + "(l);\n";
-      Out << "  " + stype + " sr = convert_" + stype + "(r);\n";
-      Out << "  return convert_";
-      printTypeName(Out, RTy);
-      Out << "(" + getCmpImplem(Pred, "sl", "sr") + ");";
-    } else {
-      // Scalar type
-      Out << "  " + stype + " sl = (" + stype + ")l;\n";
-      Out << "  " + stype + " sr = (" + stype + ")r;\n";
-      Out << "  return (";
-      printTypeName(Out, RTy);
-      Out << ")(" + getCmpImplem(Pred, "sl", "sr") + ");";
+    bool shouldCast = Ty->isIntOrIntVectorTy() && isSigned;
+    std::string args[2] = { "l", "r" };
+    if (shouldCast) {
+      for (int i = 0; i < 2; ++i) {
+        std::string tmp;
+        raw_string_ostream os(tmp);
+        printWithCast(os, Ty, isSigned, [&]() { os << args[i]; });
+        args[i] = os.str();
+      }
     }
-    Out << "\n}\n";
+    Out << "  return ";
+    printWithCastIf(Out, RTy, false, [&](){
+      Out << getCmpImplem(Pred, args[0], args[1]);
+    }, shouldCast);
+    Out << ";\n}\n";
   }
 
   // TODO: Test cast
+  // TODO_: Cast not only for vectors
   // Loop over all (vector) cast operations
   for (std::set<
            std::pair<CastInst::CastOps, std::pair<Type *, Type *>>>::iterator
@@ -1721,12 +1729,7 @@ void CWriter::generateHeader(Module &M) {
     // }
     // static u32 llvm_BitCast_u8x4_u32(<u8 x 4> in) { //
     // Src->bitsSize == Dst->bitsSize
-    //   union {
-    //     <u8 x 4> in;
-    //     u32 out;
-    //   } cast;
-    //   cast.in = in;
-    //   return cast.out;
+    //   return as_typen(in);
     // }
     CastInst::CastOps opcode = (*it).first;
     Type *SrcTy = (*it).second.first;
@@ -1761,28 +1764,41 @@ void CWriter::generateHeader(Module &M) {
     printTypeName(Out, SrcTy, false);
     Out << " in) {\n";
     if (opcode == Instruction::BitCast) {
-      Out << "  union {\n    ";
-      printTypeName(Out, SrcTy, false);
-      Out << " in;\n    ";
-      printTypeName(Out, DstTy, false);
-      Out << " out;\n  } cast;\n";
-      Out << "  cast.in = in;\n  return cast.out;\n}\n";
-    } else if (isa<VectorType>(DstTy)) {
-      cwriter_assert(SrcTy->getVectorNumElements() == DstTy->getVectorNumElements());
-      Out << "  return convert_";
-      printTypeName(Out, DstTy, false);
-      Out << "(convert_";
-      printTypeName(Out, DstTy, DstSigned);
-      Out << "(convert_";
-      printTypeName(Out, SrcTy, SrcSigned);
-      Out << "(in)));\n}\n";
+      // Reinterpret cast
+      cwriter_assert(SrcTy->getPrimitiveSizeInBits() == 
+                     DstTy->getPrimitiveSizeInBits());
+      if (DstTy->isIntOrIntVectorTy() || DstTy->isFPOrFPVectorTy()) {
+        Out << "  return as_";
+        printTypeName(Out, DstTy);
+        Out << "(in);";
+      } else {
+        Out << "  union {\n    ";
+        printTypeName(Out, SrcTy, false);
+        Out << " in;\n    ";
+        printTypeName(Out, DstTy, false);
+        Out << " out;\n  } cast;\n";
+        Out << "  cast.in = in;\n  return cast.out;\n}\n";
+      }
     } else {
-      Out << "  return in;\n";
-      Out << "}\n";
+      // Static cast
+      if (isa<VectorType>(DstTy)) {
+        cwriter_assert(SrcTy->getVectorNumElements() == 
+                       DstTy->getVectorNumElements());
+      }
+      Out << "  return ";
+      printWithCast(Out, DstTy, false, [&]() {
+        printWithCastIf(Out, DstTy, DstSigned, [&](){
+          printWithCastIf(Out, SrcTy, SrcSigned, [&]() {
+            Out << "in";
+          }, SrcTy->isIntOrIntVectorTy() && SrcSigned);
+        }, DstTy->isIntOrIntVectorTy() && DstSigned);
+      });
+      Out << ";";
     }
+    Out << "\n}\n";
   }
 
-  // Loop over all simple vector operations
+  // Loop over all simple operations
   for (std::set<std::pair<unsigned, Type *>>::iterator
            it = InlineOpDeclTypes.begin(),
            end = InlineOpDeclTypes.end();
@@ -1794,7 +1810,6 @@ void CWriter::generateHeader(Module &M) {
     Type *OpTy = (*it).second;
     bool shouldCast;
     bool isSigned;
-    // TODO_: See `opcodeNeedsCast`
     opcodeNeedsCast(opcode, shouldCast, isSigned);
 
     Out << "static ";
@@ -1822,75 +1837,75 @@ void CWriter::generateHeader(Module &M) {
       Out << " b)";
     }
 
-    Out << " {\n  return (";
-    printTypeName(Out, OpTy);
-    Out << ")(";
-
-    if (opcode == BinaryNeg) {
-      Out << "-(";
-      printTypeName(Out, OpTy, isSigned);
-      Out << ")a";
-    } else if (opcode == BinaryNot) {
-      Out << "~(";
-      printTypeName(Out, OpTy, isSigned);
-      Out << ")a";
-    } else if (opcode == Instruction::FRem) {
-      // Output a call to fmod instead of emitting a%b
-      Out << "fmod(a, b)";
-    } else {
-      Out << "(";
-      printTypeName(Out, OpTy, isSigned);
-      Out << ")a ";
-      switch (opcode) {
-      case Instruction::Add:
-      case Instruction::FAdd:
-        Out << "+";
-        break;
-      case Instruction::Sub:
-      case Instruction::FSub:
-        Out << "-";
-        break;
-      case Instruction::Mul:
-      case Instruction::FMul:
-        Out << "*";
-        break;
-      case Instruction::URem:
-      case Instruction::SRem:
-      case Instruction::FRem:
-        Out << "%";
-        break;
-      case Instruction::UDiv:
-      case Instruction::SDiv:
-      case Instruction::FDiv:
-        Out << "/";
-        break;
-      case Instruction::And:
-        Out << "&";
-        break;
-      case Instruction::Or:
-        Out << "|";
-        break;
-      case Instruction::Xor:
-        Out << "^";
-        break;
-      case Instruction::Shl:
-        Out << "<<";
-        break;
-      case Instruction::LShr:
-      case Instruction::AShr:
-        Out << ">>";
-        break;
-      default:
-#ifndef NDEBUG
-        errs() << "Invalid operator type!" << opcode << "\n";
-#endif
-        errorWithMessage("invalid operator type");
+    Out << " {\n  return ";
+    printWithCastIf(Out, OpTy, false, [&]() {
+      if (opcode == BinaryNeg ||
+          opcode == BinaryNot) {
+        switch(opcode) {
+        case BinaryNeg:
+          Out << "-";
+          break;
+        case BinaryNot:
+          Out << "~";
+          break;
+        }
+        printWithCastIf(Out, OpTy, isSigned, [&](){ Out << "a"; }, isSigned);
+      } else if (opcode == Instruction::FRem) {
+        // Output a call to fmod instead of emitting a%b
+        Out << "fmod(a, b)";
+      } else {
+        printWithCastIf(Out, OpTy, isSigned, [&]() { Out << "a"; }, isSigned);
+        Out << " ";
+        switch (opcode) {
+        case Instruction::Add:
+        case Instruction::FAdd:
+          Out << "+";
+          break;
+        case Instruction::Sub:
+        case Instruction::FSub:
+          Out << "-";
+          break;
+        case Instruction::Mul:
+        case Instruction::FMul:
+          Out << "*";
+          break;
+        case Instruction::URem:
+        case Instruction::SRem:
+        case Instruction::FRem:
+          Out << "%";
+          break;
+        case Instruction::UDiv:
+        case Instruction::SDiv:
+        case Instruction::FDiv:
+          Out << "/";
+          break;
+        case Instruction::And:
+          Out << "&";
+          break;
+        case Instruction::Or:
+          Out << "|";
+          break;
+        case Instruction::Xor:
+          Out << "^";
+          break;
+        case Instruction::Shl:
+          Out << "<<";
+          break;
+        case Instruction::LShr:
+        case Instruction::AShr:
+          Out << ">>";
+          break;
+        default:
+  #ifndef NDEBUG
+          errs() << "Invalid operator type!" << opcode << "\n";
+  #endif
+          errorWithMessage("invalid operator type");
+        }
+        Out << " ";
+        printWithCastIf(Out, OpTy, isSigned, [&]() { Out << "b"; }, isSigned);
       }
-      Out << " (";
-      printTypeName(Out, OpTy, isSigned);
-      Out << ")b";
-    }
-    Out << ");\n}\n";
+    }, isSigned);
+    Out << ";\n}\n";
   }
   
   // Loop over all inline constructors

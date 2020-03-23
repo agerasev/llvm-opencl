@@ -32,6 +32,7 @@
 #include "llvm/Transforms/Scalar.h"
 
 #include <set>
+#include <functional>
 
 #include "IDMap.h"
 #include "CLBuiltIns.h"
@@ -150,6 +151,10 @@ private:
   raw_ostream &printArrayDeclaration(raw_ostream &Out, ArrayType *Ty);
   raw_ostream &printVectorDeclaration(raw_ostream &Out, VectorType *Ty);
 
+  void printWithCast(raw_ostream &Out, Type *DstTy, bool isSigned,
+                     std::function<void()> print_inner);
+  void printWithCastIf(raw_ostream &Out, Type *DstTy, bool isSigned,
+                       std::function<void()> print_inner, bool cond);
   raw_ostream &printTypeName(raw_ostream &Out, Type *Ty, bool isSigned = false,
                              std::pair<AttributeList, CallingConv::ID> PAL =
                                  std::make_pair(AttributeList(),
