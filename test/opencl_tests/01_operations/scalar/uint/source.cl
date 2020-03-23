@@ -66,8 +66,8 @@ __kernel void kernel_main(
     add[i] = a[i] + b[i];
     sub[i] = a[i] - b[i];
     mul[i] = a[i] * b[i];
-    div[i] = a[i] / b[i];
-    mod[i] = a[i] % b[i];
+    div[i] = a[i] / (b[i] + 1); // to avoid division by 0, which is UB
+    mod[i] = a[i] % (b[i] + 1); // to avoid division by 0, which is UB
     
     eq[i] = a[i] == b[i];
     ne[i] = a[i] != b[i];
@@ -92,8 +92,8 @@ __kernel void kernel_main(
     add_assign[i] += a[i];
     sub_assign[i] -= a[i];
     mul_assign[i] *= a[i];
-    div_assign[i] /= a[i];
-    mod_assign[i] %= a[i];
+    div_assign[i] /= (a[i] + 1); // to avoid division by 0, which is UB
+    mod_assign[i] %= (a[i] + 1); // to avoid division by 0, which is UB
     
     bit_and_assign[i] &= a[i];
     bit_or_assign[i] |= a[i];

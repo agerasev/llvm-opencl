@@ -129,14 +129,18 @@ if __name__ == "__main__":
 
                     res = module.run(ctx, dst)
                     try:
-                        for f, s in zip(ref, res):
+                        for i, (f, s) in enumerate(zip(ref, res)):
                             assert np.allclose(f, s)
                     except AssertionError as e:
+                        print(f)
+                        print("!=")
+                        print(s)
+                        print("In buffer {}".format(i))
                         raise AssertionError(dst) from e
 
                 src = dst
         except Exception as e:
-            print("[fail] {} at {}".format(modpath, e))
+            print("[fail] {}".format(modpath))
             failed += 1
             if args.exit_on_failure:
                 raise

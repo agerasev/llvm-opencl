@@ -767,7 +767,9 @@ raw_ostream &CWriter::printVectorComponent(raw_ostream &Out, uint64_t i) {
   return Out;
 }
 
-raw_ostream &CWriter::printVectorShuffled(raw_ostream &Out, const std::vector<uint64_t> &mask) {
+raw_ostream &CWriter::printVectorShuffled(
+  raw_ostream &Out, const std::vector<uint64_t> &mask
+) {
   static const char comps[17] = "0123456789ABCDEF";
   size_t s = mask.size();
   if (s != 2 && s != 3 && s != 4 && s != 8 && s != 16) {
@@ -1120,26 +1122,7 @@ std::string CWriter::GetValueName(Value *Operand) {
 /// writeInstComputationInline - Emit the computation for the specified
 /// instruction inline, with no destination provided.
 void CWriter::writeInstComputationInline(Instruction &I) {
-  // C can't handle non-power-of-two integer types
-  unsigned mask = 0;
-  Type *Ty = I.getType();
-  if (Ty->isIntegerTy()) {
-    IntegerType *ITy = static_cast<IntegerType *>(Ty);
-    if (!ITy->isPowerOf2ByteWidth())
-      mask = ITy->getBitMask();
-  }
-
-  // If this is a non-trivial bool computation, make sure to truncate down to
-  // a 1 bit value.  This is important because we want "add i1 x, y" to return
-  // "0" when x and y are true, not "2" for example.
-  // Also truncate odd bit sizes
-  if (mask)
-    Out << "((";
-
   visit(&I);
-
-  if (mask)
-    Out << ")&" << mask << ")";
 }
 
 void CWriter::writeOperandInternal(Value *Operand,
@@ -1716,7 +1699,6 @@ void CWriter::generateHeader(Module &M) {
   }
 
   // TODO: Test cast
-  // TODO_: Cast not only for vectors
   // Loop over all (vector) cast operations
   for (std::set<
            std::pair<CastInst::CastOps, std::pair<Type *, Type *>>>::iterator
@@ -1767,7 +1749,13 @@ void CWriter::generateHeader(Module &M) {
       // Reinterpret cast
       cwriter_assert(SrcTy->getPrimitiveSizeInBits() == 
                      DstTy->getPrimitiveSizeInBits());
-      if (DstTy->isIntOrIntVectorTy() || DstTy->isFPOrFPVectorTy()) {
+      if (DstTy->isPointerTy() && SrcTy->isPointerTy()) {
+        cwriter_assert(DstTy->getPointerAddressSpace() ==
+                       SrcTy->getPointerAddressSpace());
+        Out << "  return (";
+        printTypeName(Out, DstTy);
+        Out << ")in;";
+      } else if (DstTy->isIntOrIntVectorTy() || DstTy->isFPOrFPVectorTy()) {
         Out << "  return as_";
         printTypeName(Out, DstTy);
         Out << "(in);";
@@ -1777,7 +1765,7 @@ void CWriter::generateHeader(Module &M) {
         Out << " in;\n    ";
         printTypeName(Out, DstTy, false);
         Out << " out;\n  } cast;\n";
-        Out << "  cast.in = in;\n  return cast.out;\n}\n";
+        Out << "  cast.in = in;\n  return cast.out;";
       }
     } else {
       // Static cast
@@ -1786,11 +1774,25 @@ void CWriter::generateHeader(Module &M) {
                        DstTy->getVectorNumElements());
       }
       Out << "  return ";
+      IntegerType *IDstTy = dyn_cast<IntegerType>(DstTy);
+      // Ensure that i1 (bool) is either 0 or 1
+      if (IDstTy && IDstTy->getBitMask() == 1) {
+        Out << "(uchar)1&";
+      }
       printWithCast(Out, DstTy, false, [&]() {
         printWithCastIf(Out, DstTy, DstSigned, [&](){
-          printWithCastIf(Out, SrcTy, SrcSigned, [&]() {
+          if (SrcTy->isIntOrIntVectorTy() && SrcSigned) {
+            IntegerType *ISrcTy = dyn_cast<IntegerType>(SrcTy);
+            // Handle i1 (bool) signed conversion
+            if (ISrcTy && ISrcTy->getBitMask() == 1) {
+              Out << "(char)0-";
+            }
+            printWithCast(Out, SrcTy, SrcSigned, [&]() {
+              Out << "in";
+            });
+          } else {
             Out << "in";
-          }, SrcTy->isIntOrIntVectorTy() && SrcSigned);
+          }
         }, DstTy->isIntOrIntVectorTy() && DstSigned);
       });
       Out << ";";
@@ -1838,6 +1840,25 @@ void CWriter::generateHeader(Module &M) {
     }
 
     Out << " {\n  return ";
+
+    // C can't handle non-power-of-two integer types
+    unsigned mask = 0;
+    if (OpTy->isIntegerTy()) {
+      IntegerType *ITy = static_cast<IntegerType *>(OpTy);
+      if (!ITy->isPowerOf2ByteWidth())
+        mask = ITy->getBitMask();
+    }
+
+    // If this is a non-trivial bool computation, make sure to truncate down to
+    // a 1 bit value.  This is important because we want "add i1 x, y" to return
+    // "0" when x and y are true, not "2" for example.
+    // Also truncate odd bit sizes
+    if (mask) {
+      Out << "((";
+      printTypeName(Out, OpTy);
+      Out << ")" << mask << "&(";
+    }
+
     printWithCastIf(Out, OpTy, false, [&]() {
       if (opcode == BinaryNeg ||
           opcode == BinaryNot) {
@@ -1905,6 +1926,10 @@ void CWriter::generateHeader(Module &M) {
         printWithCastIf(Out, OpTy, isSigned, [&]() { Out << "b"; }, isSigned);
       }
     }, isSigned);
+
+    if (mask)
+      Out << "))";
+
     Out << ";\n}\n";
   }
   
@@ -2559,139 +2584,35 @@ void CWriter::visitPHINode(PHINode &I) {
 void CWriter::visitBinaryOperator(BinaryOperator &I) {
   using namespace PatternMatch;
 
-  CurInstr = &I;
-
   // binary instructions, shift instructions, setCond instructions.
   cwriter_assert(!I.getType()->isPointerTy());
 
-  // We must cast the results of binary operations which might be promoted.
-  bool needsCast = false;
-  if ((I.getType() == Type::getInt8Ty(I.getContext())) ||
-      (I.getType() == Type::getInt16Ty(I.getContext())) ||
-      (I.getType() == Type::getFloatTy(I.getContext()))) {
-    // types too small to work with directly
-    needsCast = true;
-  } else if (I.getType()->getPrimitiveSizeInBits() > 64) {
-    // types too big to work with directly
-    needsCast = true;
-  }
-  bool shouldCast;
-  bool castIsSigned;
-  opcodeNeedsCast(I.getOpcode(), shouldCast, castIsSigned);
-
-  if (I.getType()->isVectorTy() || needsCast || shouldCast) {
-    Type *Ty = I.getOperand(0)->getType();
-    unsigned opcode;
-    Value *X;
-    if (match(&I, m_Neg(m_Value(X))) || match(&I, m_FNeg(m_Value(X)))) {
-      opcode = BinaryNeg;
-      Out << "llvm_neg_";
-      printTypeString(Out, Ty);
-      Out << "(";
-      writeOperand(X);
-    } else if (match(&I, m_Not(m_Value(X)))) {
-      opcode = BinaryNot;
-      Out << "llvm_not_";
-      printTypeString(Out, Ty);
-      Out << "(";
-      writeOperand(X);
-    } else {
-      opcode = I.getOpcode();
-      Out << "llvm_" << Instruction::getOpcodeName(opcode) << "_";
-      printTypeString(Out, Ty);
-      Out << "(";
-      writeOperand(I.getOperand(0));
-      Out << ", ";
-      writeOperand(I.getOperand(1));
-    }
-    Out << ")";
-    InlineOpDeclTypes.insert(std::pair<unsigned, Type *>(opcode, Ty));
-    return;
-  }
-
-  // If this is a negation operation, print it out as such.  For FP, we don't
-  // want to print "-0.0 - X".
+  Type *Ty = I.getOperand(0)->getType();
+  unsigned opcode;
   Value *X;
-  if (match(&I, m_Neg(m_Value(X)))) {
-    Out << "-(";
+  if (match(&I, m_Neg(m_Value(X))) || match(&I, m_FNeg(m_Value(X)))) {
+    opcode = BinaryNeg;
+    Out << "llvm_neg_";
+    printTypeString(Out, Ty);
+    Out << "(";
     writeOperand(X);
-    Out << ")";
-  } else if (match(&I, m_FNeg(m_Value(X)))) {
-    Out << "-(";
-    writeOperand(X);
-    Out << ")";
   } else if (match(&I, m_Not(m_Value(X)))) {
-    Out << "~(";
+    opcode = BinaryNot;
+    Out << "llvm_not_";
+    printTypeString(Out, Ty);
+    Out << "(";
     writeOperand(X);
-    Out << ")";
-  } else if (I.getOpcode() == Instruction::FRem) {
-    // Output a call to `fmod` instead of emitting a%b
-    Out << "fmod(";
+  } else {
+    opcode = I.getOpcode();
+    Out << "llvm_" << Instruction::getOpcodeName(opcode) << "_";
+    printTypeString(Out, Ty);
+    Out << "(";
     writeOperand(I.getOperand(0));
     Out << ", ";
     writeOperand(I.getOperand(1));
-    Out << ")";
-  } else {
-
-    // Write out the cast of the instruction's value back to the proper type
-    // if necessary.
-    bool NeedsClosingParens = writeInstructionCast(I);
-
-    // Certain instructions require the operand to be forced to a specific type
-    // so we use writeOperandWithCast here instead of writeOperand. Similarly
-    // below for operand 1
-    writeOperandWithCast(I.getOperand(0), I.getOpcode());
-
-    switch (I.getOpcode()) {
-    case Instruction::Add:
-    case Instruction::FAdd:
-      Out << " + ";
-      break;
-    case Instruction::Sub:
-    case Instruction::FSub:
-      Out << " - ";
-      break;
-    case Instruction::Mul:
-    case Instruction::FMul:
-      Out << " * ";
-      break;
-    case Instruction::URem:
-    case Instruction::SRem:
-    case Instruction::FRem:
-      Out << " % ";
-      break;
-    case Instruction::UDiv:
-    case Instruction::SDiv:
-    case Instruction::FDiv:
-      Out << " / ";
-      break;
-    case Instruction::And:
-      Out << " & ";
-      break;
-    case Instruction::Or:
-      Out << " | ";
-      break;
-    case Instruction::Xor:
-      Out << " ^ ";
-      break;
-    case Instruction::Shl:
-      Out << " << ";
-      break;
-    case Instruction::LShr:
-    case Instruction::AShr:
-      Out << " >> ";
-      break;
-    default:
-#ifndef NDEBUG
-      errs() << "Invalid operator type!" << I << "\n";
-#endif
-      errorWithMessage("invalid operator type");
-    }
-
-    writeOperandWithCast(I.getOperand(1), I.getOpcode());
-    if (NeedsClosingParens)
-      Out << "))";
   }
+  Out << ")";
+  InlineOpDeclTypes.insert(std::pair<unsigned, Type *>(opcode, Ty));
 }
 
 void CWriter::visitICmpInst(ICmpInst &I) {
@@ -2734,77 +2655,22 @@ void CWriter::visitFCmpInst(FCmpInst &I) {
   }
 }
 
-static const char *getFloatBitCastField(Type *Ty) {
-  switch (Ty->getTypeID()) {
-  default:
-    llvm_unreachable("Invalid Type");
-  case Type::FloatTyID:
-    return "Float";
-  case Type::DoubleTyID:
-    return "Double";
-  case Type::IntegerTyID: {
-    unsigned NumBits = cast<IntegerType>(Ty)->getBitWidth();
-    if (NumBits <= 32)
-      return "Int32";
-    else
-      return "Int64";
-  }
-  }
-}
-
 void CWriter::visitCastInst(CastInst &I) {
   CurInstr = &I;
 
   Type *DstTy = I.getType();
   Type *SrcTy = I.getOperand(0)->getType();
 
-  if (DstTy->isVectorTy() || SrcTy->isVectorTy() ||
-      DstTy->getPrimitiveSizeInBits() > 64 ||
-      SrcTy->getPrimitiveSizeInBits() > 64) {
-    Out << "llvm_" << I.getOpcodeName() << "_";
-    printTypeString(Out, SrcTy);
-    Out << "_";
-    printTypeString(Out, DstTy);
-    Out << "(";
-    writeOperand(I.getOperand(0));
-    Out << ")";
-    CastOpDeclTypes.insert(
-        std::pair<Instruction::CastOps, std::pair<Type *, Type *>>(
-            I.getOpcode(), std::pair<Type *, Type *>(SrcTy, DstTy)));
-    return;
-  }
-
-  if (isFPIntBitCast(I)) {
-    Out << '(';
-    // These int<->float and long<->double casts need to be handled specially
-    Out << GetValueName(&I) << "__BITCAST_TEMPORARY."
-        << getFloatBitCastField(I.getOperand(0)->getType()) << " = ";
-    writeOperand(I.getOperand(0));
-    Out << ", " << GetValueName(&I) << "__BITCAST_TEMPORARY."
-        << getFloatBitCastField(I.getType());
-    Out << ')';
-    return;
-  }
-
-  Out << '(';
-  printCast(I.getOpcode(), SrcTy, DstTy);
-
-  // Make a sext from i1 work by subtracting the i1 from 0 (an int).
-  if (SrcTy == Type::getInt1Ty(I.getContext()) &&
-      I.getOpcode() == Instruction::SExt)
-    Out << "0-";
-
+  Out << "llvm_" << I.getOpcodeName() << "_";
+  printTypeString(Out, SrcTy);
+  Out << "_";
+  printTypeString(Out, DstTy);
+  Out << "(";
   writeOperand(I.getOperand(0));
-
-  if (DstTy == Type::getInt1Ty(I.getContext()) &&
-      (I.getOpcode() == Instruction::Trunc ||
-       I.getOpcode() == Instruction::FPToUI ||
-       I.getOpcode() == Instruction::FPToSI ||
-       I.getOpcode() == Instruction::PtrToInt)) {
-    // Make sure we really get a trunc to bool by anding the operand with 1
-    Out << "&1u";
-  }
-  Out << ')';
+  Out << ")";
+  CastOpDeclTypes.insert(
+      std::pair<Instruction::CastOps, std::pair<Type *, Type *>>(
+          I.getOpcode(), std::pair<Type *, Type *>(SrcTy, DstTy)));
 }
 
 void CWriter::visitSelectInst(SelectInst &I) {
