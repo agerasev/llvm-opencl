@@ -68,7 +68,7 @@ __kernel void kernel_main(
     mul[i] = a[i] * b[i];
     div[i] = a[i] / true; // UB otherwise
     mod[i] = a[i] % true; // UB otherwise
-    
+
     eq[i] = a[i] == b[i];
     ne[i] = a[i] != b[i];
     gt[i] = a[i] > b[i];

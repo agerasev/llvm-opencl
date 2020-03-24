@@ -159,8 +159,13 @@ private:
                        std::function<void()> print_inner, bool cond);
   void printWithCastIf(raw_ostream &Out, Type *DstTy, bool isSigned,
                        const std::string &inner, bool cond);
-  void printIntSExt(raw_ostream &Out, Type *Ty, const std::string &var);
-  void printIntTrunc(raw_ostream &Out, Type *Ty, const std::string &var);
+  
+  unsigned int getNextPowerOf2(unsigned int width);
+  uint64_t getIntPadded(uint64_t value, unsigned int width);
+  void printPadded(raw_ostream &Out, Type *Ty, std::function<void()> print_inner);
+  void printPadded(raw_ostream &Out, Type *Ty, const std::string &inner);
+  void printUnpadded(raw_ostream &Out, Type *Ty, std::function<void()> print_inner);
+  void printUnpadded(raw_ostream &Out, Type *Ty, const std::string &inner);
 
   raw_ostream &printTypeName(raw_ostream &Out, Type *Ty, bool isSigned = false,
                              std::pair<AttributeList, CallingConv::ID> PAL =

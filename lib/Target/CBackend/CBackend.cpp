@@ -470,33 +470,35 @@ void CWriter::printWithCastIf(
   printWithCastIf(Out, DstTy, isSigned, [&]() { Out << inner; }, cond);
 }
 
-void CWriter::printIntSExt(raw_ostream &Out, Type *Ty, const std::string &var) {
-  cwriter_assert(Ty->isIntOrIntVectorTy());
-  IntegerType *ITy;
-  if (Ty->isVectorTy()) {
-    ITy = cast<IntegerType>(Ty->getVectorElementType());
+unsigned int CWriter::getNextPowerOf2(unsigned int width) {
+  if (width <= 8) {
+    return 8;
+  } else if (width <= 16) {
+    return 16;
+  } else if (width <= 32) {
+    return 32;
+  } else if (width <= 64) {
+    return 64;
   } else {
-    ITy = cast<IntegerType>(Ty);
-  }
-  if (ITy->isPowerOf2ByteWidth()) {
-    // Already in required form
-    Out << var;
-  } else {
-    // Truncate to bit size
-    uint64_t mask = ITy->getBitMask();
-    uint64_t sbit = (mask >> 1) ^ mask; // Sign bit mask
-    Out << "(((" << var << " & ";
-    printWithCast(Out, ITy, false, "0x" + utohexstr(sbit));
-    Out << ") ? ";
-    printWithCast(Out, ITy, false, "~0x" + utohexstr(mask));
-    Out << " : ";
-    printWithCast(Out, ITy, false, "0");
-    Out << ") | " << var << ")";
+    errorWithMessage("Integers of size larger than 64 is not supported");
   }
 }
 
-void CWriter::printIntTrunc(raw_ostream &Out, Type *Ty, const std::string &var) {
-  cwriter_assert(Ty->isIntOrIntVectorTy());
+uint64_t CWriter::getIntPadded(uint64_t value, unsigned int width) {
+  unsigned int padding = getNextPowerOf2(width) - width;
+  return (int64_t)(value << padding) >> padding;
+}
+
+// OpenCL cannot handle non-power-of-2 integers (except bool).
+// So we need to contain such integers in larger power-of-2 types.
+// In order to have proper result in cast and arithmetic operations
+// we need to fill unused bits with the most significant bit of integer.
+void CWriter::printPadded(raw_ostream &Out, Type *Ty,
+                            std::function<void()> print_inner) {
+  if(!Ty->isIntOrIntVectorTy()) {
+    print_inner();
+    return;
+  }
   IntegerType *ITy;
   if (Ty->isVectorTy()) {
     ITy = cast<IntegerType>(Ty->getVectorElementType());
@@ -505,14 +507,50 @@ void CWriter::printIntTrunc(raw_ostream &Out, Type *Ty, const std::string &var) 
   }
   if (ITy->isPowerOf2ByteWidth()) {
     // Already in required form
-    Out << var;
+    print_inner();
   } else {
-    // Truncate to bit size
-    uint64_t mask = ITy->getBitMask();
-    Out << "(";
-    printWithCast(Out, ITy, false, "0x" + utohexstr(mask));
-    Out << " & " << var << ")";
+    // Truncate to bit size while filling padding bits with sign bit
+    unsigned int width = ITy->getBitWidth();
+    unsigned int padding_width = getNextPowerOf2(width) - width;
+    printWithCast(Out, Ty, false, [&]() {
+      Out << "(";
+      printWithCast(Out, Ty, true, [&]() {
+        print_inner();
+        Out << " << " << padding_width;
+      });
+      // The right-shift of negative value is not UB in OpenCL unlike C
+      Out << " >> " << padding_width << ")";
+    });
   }
+}
+
+void CWriter::printPadded(raw_ostream &Out, Type *Ty, const std::string &inner) {
+  printPadded(Out, Ty, [&]() { Out << inner; });
+}
+
+void CWriter::printUnpadded(raw_ostream &Out, Type *Ty,
+                            std::function<void()> print_inner) {
+  if(!Ty->isIntOrIntVectorTy()) {
+    print_inner();
+    return;
+  }
+  IntegerType *ITy;
+  if (Ty->isVectorTy()) {
+    ITy = cast<IntegerType>(Ty->getVectorElementType());
+  } else {
+    ITy = cast<IntegerType>(Ty);
+  }
+  if (ITy->isPowerOf2ByteWidth()) {
+    print_inner();
+  } else {
+    Out << "(";
+    print_inner();
+    Out << " & 0x" << utohexstr(ITy->getBitMask()) << ")";
+  }
+}
+
+void CWriter::printUnpadded(raw_ostream &Out, Type *Ty, const std::string &inner) {
+  printUnpadded(Out, Ty, [&]() { Out << inner; });
 }
 
 // Pass the Type* and the variable name and this prints out the variable
@@ -966,7 +1004,7 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
     Type *Ty = CI->getType();
     unsigned ActiveBits = CI->getValue().getMinSignedBits();
     if (Ty == Type::getInt1Ty(CPV->getContext())) {
-      Out << (CI->getZExtValue() ? '1' : '0');
+      Out << (CI->getZExtValue() ? "(uchar)0xFF" : "(uchar)0");
     } else if (Context != ContextNormal && ActiveBits < 64 &&
                Ty->getPrimitiveSizeInBits() < 64 &&
                ActiveBits < Ty->getPrimitiveSizeInBits()) {
@@ -1295,7 +1333,7 @@ void CWriter::opcodeNeedsCast(
     break;
   }
 }
-
+// TODO_: Remove?
 void CWriter::writeOperandWithCast(Value *Operand, unsigned Opcode) {
   // Write out the casted operand if we should, otherwise just write the
   // operand.
@@ -1318,6 +1356,7 @@ void CWriter::writeOperandWithCast(Value *Operand, unsigned Opcode) {
 
 // Write the operand with a cast to another type based on the icmp predicate
 // being used.
+// TODO_: Remove?
 void CWriter::writeOperandWithCast(Value *Operand, ICmpInst &Cmp) {
   // This has to do a cast to ensure the operand has the right signedness.
   // Also, if the operand is a pointer, we make sure to cast to an integer when
@@ -1347,7 +1386,7 @@ void CWriter::writeOperandWithCast(Value *Operand, ICmpInst &Cmp) {
   writeOperand(Operand);
   Out << ")";
 }
-
+// TODO_: Remove?
 static void defineUnalignedLoad(raw_ostream &Out) {
   // Define unaligned-load helper macro
   Out << "#define __UNALIGNED_LOAD__(type, align, op) ((struct { type data "
@@ -1406,6 +1445,7 @@ static SpecialGlobalClass getGlobalVariableClass(GlobalVariable *GV) {
 }
 
 /*
+// TODO_: Remove?
 // PrintEscapedString - Print each character of the specified string, escaping
 // it if it is not printable or if it is an escape char.
 static void PrintEscapedString(const char *Str, unsigned Length,
@@ -1668,6 +1708,8 @@ void CWriter::generateHeader(Module &M) {
     VectorType *VTy = dyn_cast<VectorType>(*it);
     if (VTy) {
       Type *ElTy = VTy->getElementType();
+      // TODO_: Replace select with `?:` in order to allow
+      // frontend to make some optimizations
       Out << "  return select(ifnot, iftrue, convert_";
       switch (ElTy->getTypeID()) {
       case Type::IntegerTyID:
@@ -1751,7 +1793,7 @@ void CWriter::generateHeader(Module &M) {
       if (Ty->isVectorTy()) {
         printWithCast(Out, RTy, true, cmp_res);
       } else {
-        Out << cmp_res;
+        Out << "(" << cmp_res << ") ? 0xFF : 0";
       }
     });
     Out << ";\n}\n";
@@ -1824,7 +1866,8 @@ void CWriter::generateHeader(Module &M) {
         Out << " in;\n    ";
         printTypeName(Out, DstTy, false);
         Out << " out;\n  } cast;\n";
-        Out << "  cast.in = in;\n  return cast.out;\n";
+        Out << "  cast.in = in;\n"
+            << "  return cast.out;\n";
       }
     } else {
       // Static cast
@@ -1832,29 +1875,21 @@ void CWriter::generateHeader(Module &M) {
         cwriter_assert(SrcTy->getVectorNumElements() == 
                        DstTy->getVectorNumElements());
       }
-      Out << "  ";
-      printTypeName(Out, DstTy);
-      Out << " out = ";
-      printWithCast(Out, DstTy, false, [&]() {
-        printWithCastIf(Out, DstTy, DstSigned, [&](){
-          printWithCastIf(Out, SrcTy, SrcSigned, [&](){
-            if (SrcTy->isIntOrIntVectorTy() && SrcSigned) {
-              // Handle non-power-of-2 integer signed conversion
-              printIntSExt(Out, SrcTy, "in");
-            } else {
-              Out << "in";
-            }
-          }, SrcSigned);
-        }, DstSigned);
+      Out << "  return ";
+      printPadded(Out, DstTy, [&]() {
+        printWithCast(Out, DstTy, false, [&]() {
+          printWithCastIf(Out, DstTy, DstSigned, [&]() {
+            printWithCastIf(Out, SrcTy, SrcSigned, [&]() {
+              if (SrcSigned) {
+                Out << "in";
+              } else {
+                printUnpadded(Out, SrcTy, "in");
+              }
+            }, SrcSigned);
+          }, DstSigned);
+        });
       });
       Out << ";\n";
-      if (DstTy->isIntOrIntVectorTy()) {
-        // Handle non-power-of-2 integers
-        Out << "  out = ";
-        printIntTrunc(Out, DstTy, "out");
-        Out << ";\n";
-      }
-      Out << "  return out;\n";
     }
     Out << "}\n";
   }
@@ -1898,98 +1933,79 @@ void CWriter::generateHeader(Module &M) {
       Out << " b)";
     }
 
-    Out << " {\n";
+    Out << " {\n  return ";
 
-    if (OpTy->isIntOrIntVectorTy()) {
-      Out << "  a = ";
-      printIntSExt(Out, OpTy, "a");
-      Out << ";\n";
-      if (opcode != BinaryNeg && opcode != BinaryNot) {
-        Out << "  b = ";
-        printIntSExt(Out, OpTy, "b");
-        Out << ";\n";
-      }
-    }
-
-    Out << "  ";
-    printTypeName(Out, OpTy);
-    Out << " c = ";
-
-    printWithCastIf(Out, OpTy, false, [&]() {
-      if (opcode == BinaryNeg || opcode == BinaryNot) {
-        switch(opcode) {
-        case BinaryNeg:
-          Out << "-";
-          break;
-        case BinaryNot:
-          Out << "~";
-          break;
+    printPadded(Out, OpTy, [&]() {
+      printWithCastIf(Out, OpTy, false, [&]() {
+        if (opcode == BinaryNeg || opcode == BinaryNot) {
+          switch(opcode) {
+          case BinaryNeg:
+            Out << "-";
+            break;
+          case BinaryNot:
+            Out << "~";
+            break;
+          }
+          printWithCastIf(Out, OpTy, isSigned, "a", isSigned);
+        } else if (opcode == Instruction::FRem) {
+          // Output a call to fmod instead of emitting a%b
+          Out << "fmod(a, b)";
+        } else {
+          Out << "(";
+          printWithCastIf(Out, OpTy, isSigned, "a", isSigned);
+          Out << " ";
+          switch (opcode) {
+          case Instruction::Add:
+          case Instruction::FAdd:
+            Out << "+";
+            break;
+          case Instruction::Sub:
+          case Instruction::FSub:
+            Out << "-";
+            break;
+          case Instruction::Mul:
+          case Instruction::FMul:
+            Out << "*";
+            break;
+          case Instruction::URem:
+          case Instruction::SRem:
+          case Instruction::FRem:
+            Out << "%";
+            break;
+          case Instruction::UDiv:
+          case Instruction::SDiv:
+          case Instruction::FDiv:
+            Out << "/";
+            break;
+          case Instruction::And:
+            Out << "&";
+            break;
+          case Instruction::Or:
+            Out << "|";
+            break;
+          case Instruction::Xor:
+            Out << "^";
+            break;
+          case Instruction::Shl:
+            Out << "<<";
+            break;
+          case Instruction::LShr:
+          case Instruction::AShr:
+            Out << ">>";
+            break;
+          default:
+#ifndef NDEBUG
+            errs() << "Invalid operator type!" << opcode << "\n";
+#endif
+            errorWithMessage("invalid operator type");
+          }
+          Out << " ";
+          printWithCastIf(Out, OpTy, isSigned, "b", isSigned);
+          Out << ")";
         }
-        printWithCastIf(Out, OpTy, isSigned, "a", isSigned);
-      } else if (opcode == Instruction::FRem) {
-        // Output a call to fmod instead of emitting a%b
-        Out << "fmod(a, b)";
-      } else {
-        printWithCastIf(Out, OpTy, isSigned, "a", isSigned);
-        Out << " ";
-        switch (opcode) {
-        case Instruction::Add:
-        case Instruction::FAdd:
-          Out << "+";
-          break;
-        case Instruction::Sub:
-        case Instruction::FSub:
-          Out << "-";
-          break;
-        case Instruction::Mul:
-        case Instruction::FMul:
-          Out << "*";
-          break;
-        case Instruction::URem:
-        case Instruction::SRem:
-        case Instruction::FRem:
-          Out << "%";
-          break;
-        case Instruction::UDiv:
-        case Instruction::SDiv:
-        case Instruction::FDiv:
-          Out << "/";
-          break;
-        case Instruction::And:
-          Out << "&";
-          break;
-        case Instruction::Or:
-          Out << "|";
-          break;
-        case Instruction::Xor:
-          Out << "^";
-          break;
-        case Instruction::Shl:
-          Out << "<<";
-          break;
-        case Instruction::LShr:
-        case Instruction::AShr:
-          Out << ">>";
-          break;
-        default:
-  #ifndef NDEBUG
-          errs() << "Invalid operator type!" << opcode << "\n";
-  #endif
-          errorWithMessage("invalid operator type");
-        }
-        Out << " ";
-        printWithCastIf(Out, OpTy, isSigned, "b", isSigned);
-      }
-    }, isSigned);
-    Out << ";\n";
-
-    if (OpTy->isIntOrIntVectorTy()) {
-      Out << "  c = ";
-      printIntTrunc(Out, OpTy, "c");
-      Out << ";\n";
-    }
-    Out << "  return c;\n";
-    Out << "}\n";
+      }, isSigned);
+    });
+    Out << ";\n}\n";
   }
   
   // Loop over all inline constructors
