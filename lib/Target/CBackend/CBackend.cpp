@@ -217,17 +217,17 @@ raw_ostream &CWriter::printTypeString(raw_ostream &Out, Type *Ty) {
 std::string CWriter::getStructName(StructType *ST) {
   cwriter_assert(ST->getNumElements() != 0);
   if (!ST->isLiteral() && !ST->getName().empty())
-    return "struct l_" + CBEMangle(ST->getName().str());
+    return "struct " + CBEMangle(ST->getName().str());
 
   unsigned id = UnnamedStructIDs.getOrInsert(ST);
-  return "struct l_unnamed_" + utostr(id);
+  return "struct unnamed_" + utostr(id);
 }
 
 std::string
 CWriter::getFunctionName(FunctionType *FT,
                          std::pair<AttributeList, CallingConv::ID> PAL) {
   unsigned id = UnnamedFunctionIDs.getOrInsert(std::make_pair(FT, PAL));
-  return "l_fptr_" + utostr(id);
+  return "fptr_" + utostr(id);
 }
 
 std::string CWriter::getArrayName(ArrayType *AT) {
@@ -237,7 +237,7 @@ std::string CWriter::getArrayName(ArrayType *AT) {
   // value semantics (avoiding the array "decay").
   cwriter_assert(!isEmptyType(AT));
   printTypeName(ArrayInnards, AT->getElementType());
-  return "struct l_array_" + utostr(AT->getNumElements()) + '_' +
+  return "struct array_" + utostr(AT->getNumElements()) + '_' +
          CBEMangle(ArrayInnards.str());
 }
 
@@ -445,6 +445,13 @@ void CWriter::printWithCast(
   }
 }
 
+void CWriter::printWithCast(
+  raw_ostream &Out, Type *DstTy, bool isSigned,
+  const std::string &inner
+) {
+  printWithCast(Out, DstTy, isSigned, [&]() { Out << inner; });
+}
+
 void CWriter::printWithCastIf(
   raw_ostream &Out, Type *DstTy, bool isSigned,
   std::function<void()> print_inner, bool cond
@@ -454,6 +461,13 @@ void CWriter::printWithCastIf(
   } else {
     print_inner();
   }
+}
+
+void CWriter::printWithCastIf(
+  raw_ostream &Out, Type *DstTy, bool isSigned,
+  const std::string &inner, bool cond
+) {
+  printWithCastIf(Out, DstTy, isSigned, [&]() { Out << inner; }, cond);
 }
 
 // Pass the Type* and the variable name and this prints out the variable
@@ -1681,20 +1695,24 @@ void CWriter::generateHeader(Module &M) {
     printTypeName(Out, Ty);
     Out << " r) {\n";
 
-    bool shouldCast = Ty->isIntOrIntVectorTy() && isSigned;
     std::string args[2] = { "l", "r" };
-    if (shouldCast) {
+    if (Ty->isIntOrIntVectorTy() && isSigned) {
       for (int i = 0; i < 2; ++i) {
         std::string tmp;
         raw_string_ostream os(tmp);
-        printWithCast(os, Ty, isSigned, [&]() { os << args[i]; });
+        printWithCast(os, Ty, isSigned, args[i]);
         args[i] = os.str();
       }
     }
     Out << "  return ";
-    printWithCastIf(Out, RTy, false, [&](){
-      Out << getCmpImplem(Pred, args[0], args[1]);
-    }, shouldCast);
+    printWithCast(Out, RTy, false, [&](){
+      std::string cmp_res = getCmpImplem(Pred, args[0], args[1]);
+      if (Ty->isVectorTy()) {
+        printWithCast(Out, RTy, true, cmp_res);
+      } else {
+        Out << cmp_res;
+      }
+    });
     Out << ";\n}\n";
   }
 
@@ -1787,9 +1805,7 @@ void CWriter::generateHeader(Module &M) {
             if (ISrcTy && ISrcTy->getBitMask() == 1) {
               Out << "(char)0-";
             }
-            printWithCast(Out, SrcTy, SrcSigned, [&]() {
-              Out << "in";
-            });
+            printWithCast(Out, SrcTy, SrcSigned, "in");
           } else {
             Out << "in";
           }
@@ -1870,12 +1886,12 @@ void CWriter::generateHeader(Module &M) {
           Out << "~";
           break;
         }
-        printWithCastIf(Out, OpTy, isSigned, [&](){ Out << "a"; }, isSigned);
+        printWithCastIf(Out, OpTy, isSigned, "a", isSigned);
       } else if (opcode == Instruction::FRem) {
         // Output a call to fmod instead of emitting a%b
         Out << "fmod(a, b)";
       } else {
-        printWithCastIf(Out, OpTy, isSigned, [&]() { Out << "a"; }, isSigned);
+        printWithCastIf(Out, OpTy, isSigned, "a", isSigned);
         Out << " ";
         switch (opcode) {
         case Instruction::Add:
@@ -1923,7 +1939,7 @@ void CWriter::generateHeader(Module &M) {
           errorWithMessage("invalid operator type");
         }
         Out << " ";
-        printWithCastIf(Out, OpTy, isSigned, [&]() { Out << "b"; }, isSigned);
+        printWithCastIf(Out, OpTy, isSigned, "b", isSigned);
       }
     }, isSigned);
 
@@ -2922,112 +2938,55 @@ bool CWriter::visitBuiltinCall(CallInst &I, Intrinsic::ID ID) {
   }
 }
 
-// TODO_: Explicitly cast vector pointer to scalar pointer
+// TODO_: Simplify expressions in cases of zero indices
 void CWriter::printGEPExpression(Value *Ptr, gep_type_iterator I,
                                  gep_type_iterator E) {
-
-  // If there are no indices, just print out the pointer.
-  if (I == E) {
-    writeOperand(Ptr);
-    return;
-  }
-
-  // Find out if the last index is into a vector.  If so, we have to print this
-  // specially.  Since vectors can't have elements of indexable type, only the
-  // last index could possibly be of a vector element.
-  // TODO_: Maybe pull-request this fix into original `llvm-cbe`?
-  VectorType *LastButOneIndexIsVector = nullptr;
-  {
-    VectorType *LastIndexIsVector = nullptr;
-    for (gep_type_iterator TmpI = I; TmpI != E; ++TmpI) {
-      LastButOneIndexIsVector = LastIndexIsVector;
-      LastIndexIsVector = dyn_cast<VectorType>(TmpI.getIndexedType());
-    }
-  }
-
-  Out << "(";
-
-  // If the last index is into a vector, we can't print it as &a[i][j] because
-  // we can't index into a vector with j in GCC.  Instead, emit this as
-  // (((float*)&a[i])+j)
-  // TODO: this is no longer true now that we don't represent vectors using
-  // gcc-extentions
-  if (LastButOneIndexIsVector) {
-    Out << "((";
-    printTypeName(Out,
-                  PointerType::getUnqual(LastButOneIndexIsVector->getElementType()));
-    Out << ")(";
-  }
-
-  Out << '&';
+  Out.flush();
+  OutModifier mod(_Out); // writeOperand always print to Out
+  // We use this workaround to extract written data from Out
 
   Type *IntoT = I.getIndexedType();
-
-  // If the first index is 0 (very typical) we can do a number of
-  // simplifications to clean up the code.
-  Value *FirstOp = I.getOperand();
-  if (!isa<Constant>(FirstOp) || !cast<Constant>(FirstOp)->isNullValue()) {
-    // First index isn't simple, print it the hard way.
-    writeOperand(Ptr);
-  } else {
-    IntoT = I.getIndexedType();
-    ++I; // Skip the zero index.
-
-    // Okay, emit the first operand. If Ptr is something that is already address
-    // exposed, like a global, avoid emitting (&foo)[0], just emit foo instead.
-    if (isAddressExposed(Ptr)) {
-      writeOperandInternal(Ptr);
-    } else if (I != E && I.isStruct()) {
-      // If we didn't already emit the first operand, see if we can print it as
-      // P->f instead of "P[0].f"
-      writeOperand(Ptr);
-      Out << "->field" << cast<ConstantInt>(I.getOperand())->getZExtValue();
-      IntoT = I.getIndexedType();
-      ++I; // eat the struct index as well.
-    } else {
-      // Instead of emitting P[0][1], emit (*P)[1], which is more idiomatic.
-      Out << "(*";
-      writeOperand(Ptr);
-      Out << ")";
-    }
-  }
-
-  for (; I != E; ++I) {
-    cwriter_assert(
-        I.getOperand()
-            ->getType()
-            ->isIntegerTy()); // TODO: indexing a Vector with a Vector is valid,
-                              // but we don't support it here
-    if (I.isStruct()) {
-      Out << ".field" << cast<ConstantInt>(I.getOperand())->getZExtValue();
-    } else if (IntoT->isArrayTy()) {
-      Out << ".array[";
-      writeOperandWithCast(I.getOperand(), Instruction::GetElementPtr);
-      Out << ']';
-    } else if (!IntoT->isVectorTy()) {
-      Out << '[';
-      writeOperandWithCast(I.getOperand(), Instruction::GetElementPtr);
-      Out << ']';
-    } else {
-      // If the last index is into a vector, then print it out as "+j)".  This
-      // works with the 'LastButOneIndexIsVector' code above.
-      if (isa<Constant>(I.getOperand()) &&
-          cast<Constant>(I.getOperand())->isNullValue()) {
-        //Out << "))"; // avoid "+0".
-      } else {
-        Out << ")+(";
-        writeOperandWithCast(I.getOperand(), Instruction::GetElementPtr);
-        //Out << "))";
-      }
-    }
-
-    IntoT = I.getIndexedType();
-  }
-
-  if (LastButOneIndexIsVector) {
-    Out << "))";
+  Out << "(";
+  writeOperand(Ptr);
+  if (I != E) {
+    Out << " + ";
+    writeOperandWithCast(I.getOperand(), Instruction::GetElementPtr);
+    ++I;
   }
   Out << ")";
+
+  for (; I != E; ++I) {
+    cwriter_assert(I.getOperand()->getType()->isIntegerTy());
+    // TODO: indexing a Vector with a Vector is valid,
+    // but we don't support it here
+
+    Out.flush();
+    std::string prev = mod.cut_tail(); // Extract Out changes
+
+    if (IntoT->isStructTy()) {
+      Out << "(&" << prev << "->field"
+          << cast<ConstantInt>(I.getOperand())->getZExtValue()
+          << ")";
+    } else if (IntoT->isArrayTy()) {
+      Out << "(&" << prev << "->array[";
+      writeOperandWithCast(I.getOperand(), Instruction::GetElementPtr);
+      Out << "])";
+    } else if (IntoT->isVectorTy()) {
+      Out << "(&((";
+      printTypeName(Out, 
+        IntoT->getVectorElementType()->getPointerTo(
+          Ptr->getType()->getPointerAddressSpace()));
+      Out << ")" << prev << ")[";
+      writeOperandWithCast(I.getOperand(), Instruction::GetElementPtr);
+      Out << "])";
+    } else {
+      Out << "(&" << prev << "[";
+      writeOperandWithCast(I.getOperand(), Instruction::GetElementPtr);
+      Out << "])";
+    }
+
+    IntoT = I.getIndexedType();
+  }
 }
 
 void CWriter::writeMemoryAccess(Value *Operand, Type *OperandType,

@@ -153,8 +153,12 @@ private:
 
   void printWithCast(raw_ostream &Out, Type *DstTy, bool isSigned,
                      std::function<void()> print_inner);
+  void printWithCast(raw_ostream &Out, Type *DstTy, bool isSigned,
+                     const std::string &inner);
   void printWithCastIf(raw_ostream &Out, Type *DstTy, bool isSigned,
                        std::function<void()> print_inner, bool cond);
+  void printWithCastIf(raw_ostream &Out, Type *DstTy, bool isSigned,
+                       const std::string &inner, bool cond);
   raw_ostream &printTypeName(raw_ostream &Out, Type *Ty, bool isSigned = false,
                              std::pair<AttributeList, CallingConv::ID> PAL =
                                  std::make_pair(AttributeList(),
@@ -278,6 +282,7 @@ private:
                           unsigned Indent);
   void printGEPExpression(Value *Ptr, gep_type_iterator I, gep_type_iterator E);
 
+  std::string GetElementPtrString(std::string ptr, gep_type_iterator I);
   std::string GetValueName(Value *Operand);
 
   friend class CWriterTestHelper;

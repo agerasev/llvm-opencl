@@ -382,7 +382,9 @@ namespace llvm_cbe {
       for (std::string tis : typeis) {
         std::string tiu = "u"+tis;
         add_functions({
+          Func(tiu+gd, "abs", { tiu+gd }),
           Func(tiu+gd, "abs", { tis+gd }),
+          Func(tiu+gd, "abs_diff", { tiu+gd, tiu+gd }),
           Func(tiu+gd, "abs_diff", { tis+gd, tis+gd }),
           Func(tiu+gd, "clamp", { tiu+gd, tis+gd, tis+gd }),
           Func(tiu+gd, "max", { tiu+gd, tis+gd }),

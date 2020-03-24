@@ -127,7 +127,11 @@ if __name__ == "__main__":
                         suffix=".o{}".format(opt)
                     )
 
-                    res = module.run(ctx, dst)
+                    try:
+                        res = module.run(ctx, dst)
+                    except Exception as e:
+                        raise Exception(dst) from e
+
                     try:
                         for i, (f, s) in enumerate(zip(ref, res)):
                             assert np.allclose(f, s)
