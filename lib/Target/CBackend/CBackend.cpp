@@ -470,6 +470,51 @@ void CWriter::printWithCastIf(
   printWithCastIf(Out, DstTy, isSigned, [&]() { Out << inner; }, cond);
 }
 
+void CWriter::printIntSExt(raw_ostream &Out, Type *Ty, const std::string &var) {
+  cwriter_assert(Ty->isIntOrIntVectorTy());
+  IntegerType *ITy;
+  if (Ty->isVectorTy()) {
+    ITy = cast<IntegerType>(Ty->getVectorElementType());
+  } else {
+    ITy = cast<IntegerType>(Ty);
+  }
+  if (ITy->isPowerOf2ByteWidth()) {
+    // Already in required form
+    Out << var;
+  } else {
+    // Truncate to bit size
+    uint64_t mask = ITy->getBitMask();
+    uint64_t sbit = (mask >> 1) ^ mask; // Sign bit mask
+    Out << "(((" << var << " & ";
+    printWithCast(Out, ITy, false, "0x" + utohexstr(sbit));
+    Out << ") ? ";
+    printWithCast(Out, ITy, false, "~0x" + utohexstr(mask));
+    Out << " : ";
+    printWithCast(Out, ITy, false, "0");
+    Out << ") | " << var << ")";
+  }
+}
+
+void CWriter::printIntTrunc(raw_ostream &Out, Type *Ty, const std::string &var) {
+  cwriter_assert(Ty->isIntOrIntVectorTy());
+  IntegerType *ITy;
+  if (Ty->isVectorTy()) {
+    ITy = cast<IntegerType>(Ty->getVectorElementType());
+  } else {
+    ITy = cast<IntegerType>(Ty);
+  }
+  if (ITy->isPowerOf2ByteWidth()) {
+    // Already in required form
+    Out << var;
+  } else {
+    // Truncate to bit size
+    uint64_t mask = ITy->getBitMask();
+    Out << "(";
+    printWithCast(Out, ITy, false, "0x" + utohexstr(mask));
+    Out << " & " << var << ")";
+  }
+}
+
 // Pass the Type* and the variable name and this prints out the variable
 // declaration.
 raw_ostream &
@@ -925,11 +970,7 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
     } else if (Context != ContextNormal && ActiveBits < 64 &&
                Ty->getPrimitiveSizeInBits() < 64 &&
                ActiveBits < Ty->getPrimitiveSizeInBits()) {
-      if (ActiveBits >= 32)
-        Out << "INT64_C(";
       Out << CI->getSExtValue(); // most likely a shorter representation
-      if (ActiveBits >= 32)
-        Out << ")";
     } else if (Ty->getPrimitiveSizeInBits() < 32 && Context == ContextNormal) {
       Out << "((";
       printSimpleType(Out, Ty, false) << ')';
@@ -941,7 +982,7 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
     } else if (Ty->getPrimitiveSizeInBits() <= 32) {
       Out << CI->getZExtValue() << 'u';
     } else if (Ty->getPrimitiveSizeInBits() <= 64) {
-      Out << "UINT64_C(" << CI->getZExtValue() << ")";
+      Out << CI->getZExtValue() << "ul";
     } else {
       errorWithMessage("Integers larger than 64 bits are not supported");
     }
@@ -1717,7 +1758,7 @@ void CWriter::generateHeader(Module &M) {
   }
 
   // TODO: Test cast
-  // Loop over all (vector) cast operations
+  // Loop over all cast operations
   for (std::set<
            std::pair<CastInst::CastOps, std::pair<Type *, Type *>>>::iterator
            it = CastOpDeclTypes.begin(),
@@ -1783,7 +1824,7 @@ void CWriter::generateHeader(Module &M) {
         Out << " in;\n    ";
         printTypeName(Out, DstTy, false);
         Out << " out;\n  } cast;\n";
-        Out << "  cast.in = in;\n  return cast.out;";
+        Out << "  cast.in = in;\n  return cast.out;\n";
       }
     } else {
       // Static cast
@@ -1791,29 +1832,31 @@ void CWriter::generateHeader(Module &M) {
         cwriter_assert(SrcTy->getVectorNumElements() == 
                        DstTy->getVectorNumElements());
       }
-      Out << "  return ";
-      IntegerType *IDstTy = dyn_cast<IntegerType>(DstTy);
-      // Ensure that i1 (bool) is either 0 or 1
-      if (IDstTy && IDstTy->getBitMask() == 1) {
-        Out << "(uchar)1&";
-      }
+      Out << "  ";
+      printTypeName(Out, DstTy);
+      Out << " out = ";
       printWithCast(Out, DstTy, false, [&]() {
         printWithCastIf(Out, DstTy, DstSigned, [&](){
-          if (SrcTy->isIntOrIntVectorTy() && SrcSigned) {
-            IntegerType *ISrcTy = dyn_cast<IntegerType>(SrcTy);
-            // Handle i1 (bool) signed conversion
-            if (ISrcTy && ISrcTy->getBitMask() == 1) {
-              Out << "(char)0-";
+          printWithCastIf(Out, SrcTy, SrcSigned, [&](){
+            if (SrcTy->isIntOrIntVectorTy() && SrcSigned) {
+              // Handle non-power-of-2 integer signed conversion
+              printIntSExt(Out, SrcTy, "in");
+            } else {
+              Out << "in";
             }
-            printWithCast(Out, SrcTy, SrcSigned, "in");
-          } else {
-            Out << "in";
-          }
-        }, DstTy->isIntOrIntVectorTy() && DstSigned);
+          }, SrcSigned);
+        }, DstSigned);
       });
-      Out << ";";
+      Out << ";\n";
+      if (DstTy->isIntOrIntVectorTy()) {
+        // Handle non-power-of-2 integers
+        Out << "  out = ";
+        printIntTrunc(Out, DstTy, "out");
+        Out << ";\n";
+      }
+      Out << "  return out;\n";
     }
-    Out << "\n}\n";
+    Out << "}\n";
   }
 
   // Loop over all simple operations
@@ -1855,29 +1898,25 @@ void CWriter::generateHeader(Module &M) {
       Out << " b)";
     }
 
-    Out << " {\n  return ";
+    Out << " {\n";
 
-    // C can't handle non-power-of-two integer types
-    unsigned mask = 0;
-    if (OpTy->isIntegerTy()) {
-      IntegerType *ITy = static_cast<IntegerType *>(OpTy);
-      if (!ITy->isPowerOf2ByteWidth())
-        mask = ITy->getBitMask();
+    if (OpTy->isIntOrIntVectorTy()) {
+      Out << "  a = ";
+      printIntSExt(Out, OpTy, "a");
+      Out << ";\n";
+      if (opcode != BinaryNeg && opcode != BinaryNot) {
+        Out << "  b = ";
+        printIntSExt(Out, OpTy, "b");
+        Out << ";\n";
+      }
     }
 
-    // If this is a non-trivial bool computation, make sure to truncate down to
-    // a 1 bit value.  This is important because we want "add i1 x, y" to return
-    // "0" when x and y are true, not "2" for example.
-    // Also truncate odd bit sizes
-    if (mask) {
-      Out << "((";
-      printTypeName(Out, OpTy);
-      Out << ")" << mask << "&(";
-    }
+    Out << "  ";
+    printTypeName(Out, OpTy);
+    Out << " c = ";
 
     printWithCastIf(Out, OpTy, false, [&]() {
-      if (opcode == BinaryNeg ||
-          opcode == BinaryNot) {
+      if (opcode == BinaryNeg || opcode == BinaryNot) {
         switch(opcode) {
         case BinaryNeg:
           Out << "-";
@@ -1942,11 +1981,15 @@ void CWriter::generateHeader(Module &M) {
         printWithCastIf(Out, OpTy, isSigned, "b", isSigned);
       }
     }, isSigned);
+    Out << ";\n";
 
-    if (mask)
-      Out << "))";
-
-    Out << ";\n}\n";
+    if (OpTy->isIntOrIntVectorTy()) {
+      Out << "  c = ";
+      printIntTrunc(Out, OpTy, "c");
+      Out << ";\n";
+    }
+    Out << "  return c;\n";
+    Out << "}\n";
   }
   
   // Loop over all inline constructors

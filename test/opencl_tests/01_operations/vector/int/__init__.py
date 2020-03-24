@@ -8,7 +8,7 @@ from opencl import Mem, run_kernel
 
 
 def run(ctx, src):
-    m = 256
+    m = 64
     n = 4*m
     a = (np.arange(n, dtype=cltypes.int) % 51) - 51//2
     b = (np.arange(n, dtype=cltypes.int) % 67) - 67//2
