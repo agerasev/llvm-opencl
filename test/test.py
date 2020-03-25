@@ -5,9 +5,11 @@ import shutil
 import importlib
 import argparse
 from subprocess import SubprocessError
+import atexit
 
 import numpy as np
 import pyopencl as cl
+import colorama
 
 from translate import translate
 
@@ -31,8 +33,15 @@ def search_tests(basedir, ignore=["__pycache__"]):
 
         yield (dirlist, dirnames, filenames)
 
+CG = colorama.Fore.GREEN
+CY = colorama.Fore.YELLOW
+CR = colorama.Fore.RED
+C_ = colorama.Style.RESET_ALL
 
 if __name__ == "__main__":
+    colorama.init()
+    atexit.register(lambda: colorama.deinit())
+
     parser = argparse.ArgumentParser(
         description="Run LLVM-OpenCL translator tests."
     )
@@ -107,7 +116,7 @@ if __name__ == "__main__":
         module = importlib.import_module(modpath)
         if not hasattr(module, "run"):
             if len(dirnames) == 0:
-                print("[warn] no tests ran for {}".format(modpath))
+                print(("[ {}warn{} ] no tests ran for {}").format(CY, C_, modpath))
                 warnings += 1
             continue
 
@@ -149,16 +158,19 @@ if __name__ == "__main__":
 
                 src = dst
         except Exception as e:
-            print("[fail] {}".format(modpath))
+            print("[ {}fail{} ] {}".format(CR, C_, modpath))
             failed += 1
             if args.exit_on_failure:
+                colorama.deinit()
                 raise
         else:
-            print("[ok] {}".format(modpath))
+            print("[ {}ok{} ] {}".format(CG, C_, modpath))
             passed += 1
-        
+
+    print(CG if failed == 0 else CR)
     print("done, {} passed, {} failed".format(passed, failed), end="")
-    print(", {} warnings".format(warnings) if warnings > 0 else "")
+    print("{}, {} warnings".format(CY, warnings) if warnings > 0 else "")
+    print(C_, end="")
 
     if failed > 0:
         exit(1)

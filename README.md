@@ -7,7 +7,7 @@ LLVM to OpenCL C Translator.
 
 This version of the LLVM-OpenCL library works with LLVM 8.0. You will have to compile this version of LLVM before you try to use LLVM-OpenCL. This guide will walk you through the compilation and installation of both tools and show usage statements to verify that the LLVM-OpenCL library is compiled correctly.
 
-### Installing LLVM
+### Building LLVM and Clang
 
 LLVM-OpenCL relies on specific LLVM internals, and so it is best to use it with a specific revision of the LLVM development tree. Currently, LLVM-OpenCL works with the LLVM 8.0 release version and autotools.
 
@@ -23,7 +23,7 @@ cmake .. -DCMAKE_BUILD_TYPE=Release -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_ENABLE_PR
 make
 ```
 
-### Compiling LLVM-OpenCL
+### Building LLVM-OpenCL
 
 Next, download and compile LLVM-OpenCL from the same folder:
 
@@ -43,7 +43,7 @@ If LLVM-OpenCL compiles, you should be able to run example with the following co
 # Add previously built LLVM-OpenCL and Clang to PATH
 export PATH=$PWD/llvm-project/llvm/build/bin:$PATH
 
-# Go to example program
+# Go to example program directory
 cd llvm-project/llvm/projects/llvm-opencl/examples/mandelbrot
 
 # Generate LLVM IR code from OpenCL kernel source

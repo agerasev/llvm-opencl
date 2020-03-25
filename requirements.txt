@@ -1,0 +1,4 @@
+numpy
+pyopencl
+colorama
+pillow
