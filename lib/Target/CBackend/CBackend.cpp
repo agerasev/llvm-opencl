@@ -516,10 +516,13 @@ void CWriter::printPadded(raw_ostream &Out, Type *Ty,
       Out << "(";
       printWithCast(Out, Ty, true, [&]() {
         print_inner();
-        Out << " << " << padding_width;
+        Out << " << ";
+        printWithCast(Out, ITy, false, "0x" + utohexstr(padding_width));
       });
       // The right-shift of negative value is not UB in OpenCL unlike C
-      Out << " >> " << padding_width << ")";
+      Out << " >> ";
+      printWithCast(Out, ITy, true, "0x" + utohexstr(padding_width));
+      Out << ")";
     });
   }
 }
@@ -545,7 +548,9 @@ void CWriter::printUnpadded(raw_ostream &Out, Type *Ty,
   } else {
     Out << "(";
     print_inner();
-    Out << " & 0x" << utohexstr(ITy->getBitMask()) << ")";
+    Out << " & ";
+    printWithCast(Out, ITy, false, "0x" + utohexstr(ITy->getBitMask()));
+    Out << ")";
   }
 }
 
@@ -3084,8 +3089,10 @@ void CWriter::writeMemoryAccess(Value *Operand, Type *OperandType,
 void CWriter::visitLoadInst(LoadInst &I) {
   CurInstr = &I;
 
-  writeMemoryAccess(I.getOperand(0), I.getType(), I.isVolatile(),
-                    I.getAlignment());
+  printPadded(Out, I.getType(), [&]() {
+    writeMemoryAccess(I.getOperand(0), I.getType(), I.isVolatile(),
+                      I.getAlignment());
+  });
 }
 
 void CWriter::visitStoreInst(StoreInst &I) {
@@ -3095,17 +3102,9 @@ void CWriter::visitStoreInst(StoreInst &I) {
                     I.isVolatile(), I.getAlignment());
   Out << " = ";
   Value *Operand = I.getOperand(0);
-  unsigned BitMask = 0;
-  if (IntegerType *ITy = dyn_cast<IntegerType>(Operand->getType()))
-    if (!ITy->isPowerOf2ByteWidth())
-      // We have a bit width that doesn't match an even power-of-2 byte
-      // size. Consequently we must & the value with the type's bit mask
-      BitMask = ITy->getBitMask();
-  if (BitMask)
-    Out << "((";
-  writeOperand(Operand);
-  if (BitMask)
-    Out << ") & " << BitMask << ")";
+  printUnpadded(Out, Operand->getType(), [&]() {
+    writeOperand(Operand);
+  });
 }
 
 void CWriter::visitFenceInst(FenceInst &I) {
