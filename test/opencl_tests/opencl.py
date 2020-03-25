@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from time import time, sleep
 import numpy as np
 import pyopencl as cl
 
@@ -23,7 +24,14 @@ def run_kernel(ctx, src_file, shape, *args, name="kernel_main"):
     with open(src_file, "r") as f:
         src = f.read()
     prg = cl.Program(ctx, src).build()
+    queue.flush()
+    queue.finish()
+
+    begin = time()
     getattr(prg, name)(queue, shape, None, *kargs)
+    queue.flush()
+    queue.finish()
+    end = time()
 
     for arg, karg in zip(args, kargs):
         if isinstance(arg, Mem):
@@ -31,3 +39,5 @@ def run_kernel(ctx, src_file, shape, *args, name="kernel_main"):
 
     queue.flush()
     queue.finish()
+
+    return end - begin

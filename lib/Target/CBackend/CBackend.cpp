@@ -1598,6 +1598,7 @@ void CWriter::generateHeader(Module &M) {
       case Intrinsic::memset:
       case Intrinsic::memcpy:
       case Intrinsic::memmove:
+      case Intrinsic::fmuladd:
         intrinsicsToDefine.push_back(&*I);
         continue;
       default:
@@ -2809,6 +2810,10 @@ void CWriter::printIntrinsicDefinition(FunctionType *funT, unsigned Opcode,
         << "    a[i] = b[i];\n"
         << "  }\n";
     break;
+  // TODO_: Use list of directly implemented intrinsics
+  case Intrinsic::fmuladd:
+    Out << "  return fma(a, b, c);";
+    break;
   default:
 #ifndef NDEBUG
     errs() << "Unsupported Intrinsic!" << Opcode << "\n";
@@ -2842,6 +2847,7 @@ bool CWriter::lowerIntrinsics(Function &F) {
           case Intrinsic::memset:
           case Intrinsic::memcpy:
           case Intrinsic::memmove:
+          case Intrinsic::fmuladd:
             // We directly implement these intrinsics
             break;
 
@@ -2992,6 +2998,7 @@ bool CWriter::visitBuiltinCall(CallInst &I, Intrinsic::ID ID) {
   case Intrinsic::memset:
   case Intrinsic::memcpy:
   case Intrinsic::memmove:
+  case Intrinsic::fmuladd:
     return false; // these use the normal function call emission
   default:
 #ifndef NDEBUG

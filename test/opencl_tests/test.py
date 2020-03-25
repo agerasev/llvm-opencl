@@ -133,13 +133,18 @@ if __name__ == "__main__":
                         raise Exception(dst) from e
 
                     try:
-                        for i, (f, s) in enumerate(zip(ref, res)):
-                            assert np.allclose(f, s)
+                        if hasattr(module, "compare"):
+                            module.compare(ref, res)
+                        else:
+                            assert len(ref) == len(res)
+                            for i, (f, s) in enumerate(zip(ref, res)):
+                                try:
+                                    assert np.allclose(f, s)
+                                except AssertionError as e:
+                                    raise AssertionError(
+                                        "Mismatch in buffer {}".format(i)
+                                    ) from e
                     except AssertionError as e:
-                        print(f)
-                        print("!=")
-                        print(s)
-                        print("In buffer {}".format(i))
                         raise AssertionError(dst) from e
 
                 src = dst
