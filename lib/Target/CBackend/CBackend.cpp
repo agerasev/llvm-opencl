@@ -1210,7 +1210,7 @@ std::string CWriter::GetValueName(Value *Operand) {
     case 0:
       return CBEMangle(Name);
     case 1:
-      return "builtin" + CBEMangle(Name);
+      return "ocl" + CBEMangle(Name);
     }
   }
 

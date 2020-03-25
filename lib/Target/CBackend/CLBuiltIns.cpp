@@ -354,18 +354,32 @@ namespace llvm_cbe {
 
     // Integer Functions
     for (std::string gd : gendim) {
+      for (std::string tis : typeis) {
+        std::string tiu = "u"+tis;
+        add_functions({
+          Func(tiu+gd, "abs", { tiu+gd }),
+          Func(tiu+gd, "abs", { tis+gd }),
+          Func(tiu+gd, "abs_diff", { tiu+gd, tiu+gd }),
+          Func(tiu+gd, "abs_diff", { tis+gd, tis+gd }),
+        });
+      }
       for (std::string ti : typei) {
         add_functions({
           Func(ti+gd, "add_sat", { ti+gd, ti+gd }),
           Func(ti+gd, "hadd", { ti+gd, ti+gd }),
           Func(ti+gd, "rhadd", { ti+gd, ti+gd }),
           Func(ti+gd, "clamp", { ti+gd, ti+gd, ti+gd }),
+          Func(ti+gd, "clamp", { ti+gd, ti+gd, ti }),
+          Func(ti+gd, "clamp", { ti+gd, ti, ti+gd }),
+          Func(ti+gd, "clamp", { ti+gd, ti, ti }),
           Func(ti+gd, "clz", { ti+gd }),
           Func(ti+gd, "ctz", { ti+gd }),
           Func(ti+gd, "mad_hi", { ti+gd, ti+gd, ti+gd }),
           Func(ti+gd, "mad_sat", { ti+gd, ti+gd, ti+gd }),
           Func(ti+gd, "max", { ti+gd, ti+gd }),
+          Func(ti+gd, "max", { ti+gd, ti }),
           Func(ti+gd, "min", { ti+gd, ti+gd }),
+          Func(ti+gd, "min", { ti+gd, ti }),
           Func(ti+gd, "mul_hi", { ti+gd, ti+gd }),
           Func(ti+gd, "rotate", { ti+gd, ti+gd }),
           Func(ti+gd, "sub_sat", { ti+gd, ti+gd }),
@@ -377,18 +391,6 @@ namespace llvm_cbe {
           Func(s+"short"+gd, "upsample", { s+"char"+gd, "uchar"+gd }),
           Func(s+"int"+gd, "upsample", { s+"short"+gd, "ushort"+gd }),
           Func(s+"long"+gd, "upsample", { s+"int"+gd, "uint"+gd }),
-        });
-      }
-      for (std::string tis : typeis) {
-        std::string tiu = "u"+tis;
-        add_functions({
-          Func(tiu+gd, "abs", { tiu+gd }),
-          Func(tiu+gd, "abs", { tis+gd }),
-          Func(tiu+gd, "abs_diff", { tiu+gd, tiu+gd }),
-          Func(tiu+gd, "abs_diff", { tis+gd, tis+gd }),
-          Func(tiu+gd, "clamp", { tiu+gd, tis+gd, tis+gd }),
-          Func(tiu+gd, "max", { tiu+gd, tis+gd }),
-          Func(tiu+gd, "min", { tiu+gd, tis+gd }),
         });
       }
     }
