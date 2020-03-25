@@ -8,8 +8,8 @@ if (NOT USE_SYSTEM_LLVM)
     AsmParser
     AsmPrinter
     BitReader
-    CBackendCodeGen
-    CBackendInfo
+    CLBackendCodeGen
+    CLBackendInfo
     CodeGen
     Core
     IRReader
@@ -21,19 +21,19 @@ if (NOT USE_SYSTEM_LLVM)
     )
 
 
-  add_llvm_tool(llvm-cbe
-    llvm-cbe.cpp
+  add_llvm_tool(llvm-opencl
+    llvm-opencl.cpp
     )
-  export_executable_symbols(llvm-cbe)
+  export_executable_symbols(llvm-opencl)
 endif()
 
 if(USE_SYSTEM_LLVM)
-  add_executable(llvm-cbe
-    llvm-cbe.cpp
+  add_executable(llvm-opencl
+    llvm-opencl.cpp
     )
   llvm_map_components_to_libnames(llvm_libs
-    CBackendCodeGen
-    CBackendInfo
+    CLBackendCodeGen
+    CLBackendInfo
     )
-  target_link_libraries(llvm-cbe LLVM ${llvm_libs})
+  target_link_libraries(llvm-opencl LLVM ${llvm_libs})
 endif()

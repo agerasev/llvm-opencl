@@ -1,4 +1,4 @@
-//===-- CBackend.cpp - Library for converting LLVM code to C --------------===//
+//===-- CLBackend.cpp - Library for converting LLVM code to C --------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -13,7 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 
-#include "CBackend.h"
+#include "CLBackend.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/IR/InstIterator.h"
@@ -48,13 +48,13 @@
 #undef setjmp
 #endif
 
-namespace llvm_cbe {
+namespace llvm_opencl {
 
 using namespace llvm;
 
-extern "C" void LLVMInitializeCBackendTarget() {
+extern "C" void LLVMInitializeCLBackendTarget() {
   // Register the target.
-  RegisterTargetMachine<CTargetMachine> X(TheCBackendTarget);
+  RegisterTargetMachine<CLTargetMachine> X(TheCLBackendTarget);
 }
 
 char CWriter::ID = 0;
@@ -91,7 +91,7 @@ static bool isEmptyType(Type *Ty) {
   return Ty->isVoidTy();
 }
 
-bool CWriter::isEmptyType(Type *Ty) const { return llvm_cbe::isEmptyType(Ty); }
+bool CWriter::isEmptyType(Type *Ty) const { return llvm_opencl::isEmptyType(Ty); }
 
 /// isAddressExposed - Return true if the specified value's name needs to
 /// have its address taken in order to get a C value of the correct type.
@@ -3336,4 +3336,4 @@ LLVM_ATTRIBUTE_NORETURN void CWriter::errorWithMessage(const char *message) {
   llvm_unreachable(message);
 }
 
-} // namespace llvm_cbe
+} // namespace llvm_opencl

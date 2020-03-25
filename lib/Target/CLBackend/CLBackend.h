@@ -1,4 +1,4 @@
-#include "CTargetMachine.h"
+#include "CLTargetMachine.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallString.h"
@@ -37,7 +37,7 @@
 #include "IDMap.h"
 #include "CLBuiltIns.h"
 
-namespace llvm_cbe {
+namespace llvm_opencl {
 
 using namespace llvm;
 
@@ -113,7 +113,7 @@ public:
     memset(&UsedHeaders, 0, sizeof(UsedHeaders));
   }
 
-  virtual StringRef getPassName() const { return "C backend"; }
+  virtual StringRef getPassName() const { return "OpenCL backend"; }
 
   void getAnalysisUsage(AnalysisUsage &AU) const {
     AU.addRequired<LoopInfoWrapperPass>();
@@ -207,7 +207,7 @@ private:
 
   bool lowerIntrinsics(Function &F);
   /// Prints the definition of the intrinsic function F. Supports the
-  /// intrinsics which need to be explicitly defined in the CBackend.
+  /// intrinsics which need to be explicitly defined in the CLBackend.
   void printIntrinsicDefinition(Function &F, raw_ostream &Out);
   void printIntrinsicDefinition(FunctionType *funT, unsigned Opcode,
                                 std::string OpName, raw_ostream &Out);
@@ -296,4 +296,4 @@ private:
   friend class CWriterTestHelper;
 };
 
-} // namespace llvm_cbe
+} // namespace llvm_opencl

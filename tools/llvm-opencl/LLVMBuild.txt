@@ -24,8 +24,8 @@ required_libraries =
  AsmParser
  AsmPrinter
  BitReader
- CBackendCodeGen
- CBackendInfo
+ CLBackendCodeGen
+ CLBackendInfo
  CodeGen
  Core
  IRReader

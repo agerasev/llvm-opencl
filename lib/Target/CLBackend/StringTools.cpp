@@ -1,6 +1,6 @@
 #include "StringTools.h"
 
-namespace llvm_cbe {
+namespace llvm_opencl {
   OutModifier::OutModifier(std::string &out) : out(out) {
     last_size = out.size();
   }

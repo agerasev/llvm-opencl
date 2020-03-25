@@ -12,7 +12,7 @@
 #include "llvm/IR/Value.h"
 
 
-namespace llvm_cbe {
+namespace llvm_opencl {
   using namespace llvm;
 
   class Func {

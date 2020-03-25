@@ -7,6 +7,6 @@ set(LLVM_LINK_COMPONENTS
   Target
   )
 
-add_llvm_library(LLVMCBackendInfo
-  CBackendTargetInfo.cpp
+add_llvm_library(LLVMCLBackendInfo
+  CLBackendTargetInfo.cpp
   )

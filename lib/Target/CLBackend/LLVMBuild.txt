@@ -1,4 +1,4 @@
-;===- ./lib/Target/CBackend/LLVMBuild.txt ----------------------*- Conf -*--===;
+;===- ./lib/Target/CLBackend/LLVMBuild.txt ----------------------*- Conf -*--===;
 ;
 ;                     The LLVM Compiler Infrastructure
 ;
@@ -20,12 +20,12 @@ subdirectories = TargetInfo
 
 [component_0]
 type = TargetGroup
-name = CBackend
+name = CLBackend
 parent = Target
 
 [component_1]
 type = Library
-name = CBackendCodeGen
-parent = CBackend
-required_libraries = Analysis CBackendInfo CodeGen Core MC ScalarOpts Support Target TransformUtils
-add_to_library_groups = CBackend
+name = CLBackendCodeGen
+parent = CLBackend
+required_libraries = Analysis CLBackendInfo CodeGen Core MC ScalarOpts Support Target TransformUtils
+add_to_library_groups = CLBackend

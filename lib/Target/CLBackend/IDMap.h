@@ -1,6 +1,6 @@
 #include "llvm/ADT/DenseMap.h"
 
-namespace llvm_cbe {
+namespace llvm_opencl {
 using namespace llvm;
 
 template <class KeyT> class IDMap {
@@ -35,4 +35,4 @@ public:
   }
 };
 
-} // namespace llvm_cbe
+} // namespace llvm_opencl

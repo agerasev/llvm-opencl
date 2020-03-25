@@ -1,4 +1,4 @@
-//===-- CTargetMachine.h - TargetMachine for the C backend ------*- C++ -*-===//
+//===-- CLTargetMachine.h - TargetMachine for the OpenCL backend ------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,12 +7,12 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file declares the TargetMachine that is used by the C backend.
+// This file declares the TargetMachine that is used by the OpenCL backend.
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef CTARGETMACHINE_H
-#define CTARGETMACHINE_H
+#ifndef CLTARGETMACHINE_H
+#define CLTARGETMACHINE_H
 
 #include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
@@ -21,16 +21,16 @@
 
 namespace llvm {
 
-class CTargetLowering : public TargetLowering {
+class CLTargetLowering : public TargetLowering {
 public:
-  explicit CTargetLowering(const TargetMachine &TM) : TargetLowering(TM) {
+  explicit CLTargetLowering(const TargetMachine &TM) : TargetLowering(TM) {
     setMaxAtomicSizeInBitsSupported(0);
   }
 };
 
-class CTargetSubtargetInfo : public TargetSubtargetInfo {
+class CLTargetSubtargetInfo : public TargetSubtargetInfo {
 public:
-  CTargetSubtargetInfo(const TargetMachine &TM, const Triple &TT, StringRef CPU,
+  CLTargetSubtargetInfo(const TargetMachine &TM, const Triple &TT, StringRef CPU,
                        StringRef FS)
       : TargetSubtargetInfo(TT, CPU, FS, ArrayRef<SubtargetFeatureKV>(),
                             ArrayRef<SubtargetFeatureKV>(), nullptr, nullptr,
@@ -38,12 +38,12 @@ public:
         Lowering(TM) {}
   bool enableAtomicExpand() const override;
   const TargetLowering *getTargetLowering() const override;
-  const CTargetLowering Lowering;
+  const CLTargetLowering Lowering;
 };
 
-class CTargetMachine : public LLVMTargetMachine {
+class CLTargetMachine : public LLVMTargetMachine {
 public:
-  CTargetMachine(const Target &T, const Triple &TT, StringRef CPU, StringRef FS,
+  CLTargetMachine(const Target &T, const Triple &TT, StringRef CPU, StringRef FS,
                  const TargetOptions &Options, Optional<Reloc::Model> RM,
                  Optional<CodeModel::Model> CM, CodeGenOpt::Level OL,
                  bool /*JIT*/)
@@ -63,10 +63,10 @@ public:
 
   // TargetMachine interface
   const TargetSubtargetInfo *getSubtargetImpl(const Function &) const override;
-  const CTargetSubtargetInfo SubtargetInfo;
+  const CLTargetSubtargetInfo SubtargetInfo;
 };
 
-extern Target TheCBackendTarget;
+extern Target TheCLBackendTarget;
 
 } // namespace llvm
 

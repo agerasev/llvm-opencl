@@ -1,4 +1,4 @@
-//===-- CTargetMachine.cpp - TargetMachine for the C backend ----*- C++ -*-===//
+//===-- CLTargetMachine.cpp - TargetMachine for the OpenCL backend ----*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,12 +7,12 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements the TargetMachine that is used by the C backend.
+// This file implements the TargetMachine that is used by the OpenCL backend.
 //
 //===----------------------------------------------------------------------===//
 
-#include "CTargetMachine.h"
-#include "CBackend.h"
+#include "CLTargetMachine.h"
+#include "CLBackend.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 
 #if LLVM_VERSION_MAJOR >= 7
@@ -21,7 +21,7 @@
 
 namespace llvm {
 
-bool CTargetMachine::addPassesToEmitFile(PassManagerBase &PM,
+bool CLTargetMachine::addPassesToEmitFile(PassManagerBase &PM,
                                          raw_pwrite_stream &Out,
 #if LLVM_VERSION_MAJOR >= 7
                                          raw_pwrite_stream *DwoOut,
@@ -45,18 +45,18 @@ bool CTargetMachine::addPassesToEmitFile(PassManagerBase &PM,
   // Lower atomic operations to libcalls
   PM.add(createAtomicExpandPass());
 
-  PM.add(new llvm_cbe::CWriter(Out));
+  PM.add(new llvm_opencl::CWriter(Out));
   return false;
 }
 
 const TargetSubtargetInfo *
-CTargetMachine::getSubtargetImpl(const Function &) const {
+CLTargetMachine::getSubtargetImpl(const Function &) const {
   return &SubtargetInfo;
 }
 
-bool CTargetSubtargetInfo::enableAtomicExpand() const { return true; }
+bool CLTargetSubtargetInfo::enableAtomicExpand() const { return true; }
 
-const TargetLowering *CTargetSubtargetInfo::getTargetLowering() const {
+const TargetLowering *CLTargetSubtargetInfo::getTargetLowering() const {
   return &Lowering;
 }
 

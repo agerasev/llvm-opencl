@@ -11,7 +11,7 @@
 #include "StringTools.h"
 
 
-namespace llvm_cbe {
+namespace llvm_opencl {
   using namespace llvm;
 
   Func::Func() {}

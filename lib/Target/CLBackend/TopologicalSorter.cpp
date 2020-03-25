@@ -8,12 +8,12 @@
 //===----------------------------------------------------------------------===//
 //
 // This file implements a DFS based Topological Sorter to order dependencies in
-// the C Backend
+// the OpenCL backend
 //
 //===----------------------------------------------------------------------===//
 #include "TopologicalSorter.h"
 
-namespace llvm_cbe {
+namespace llvm_opencl {
 
 void TopologicalSorter::addEdge(int Start, int End) {
   AdjacencyMatrix[Start].push_back(End);
@@ -53,4 +53,4 @@ bool TopologicalSorter::visit(int Node) {
   return false;
 }
 
-} // namespace llvm_cbe
+} // namespace llvm_opencl

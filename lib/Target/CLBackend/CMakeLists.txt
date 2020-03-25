@@ -2,7 +2,7 @@ add_subdirectory(TargetInfo)
 
 set(LLVM_LINK_COMPONENTS
   Analysis
-  CBackendInfo
+  CLBackendInfo
   CodeGen
   Core
   MC
@@ -13,13 +13,13 @@ set(LLVM_LINK_COMPONENTS
   TransformUtils
   )
 
-add_llvm_target(CBackendCodeGen
-  CBackend.cpp
-  CTargetMachine.cpp
+add_llvm_target(CLBackendCodeGen
+  CLBackend.cpp
+  CLTargetMachine.cpp
   TopologicalSorter.cpp
   CLBuiltIns.cpp
   StringTools.cpp
   )
 
-#set_source_files_properties(CBackend.cpp PROPERTIES COMPILE_FLAGS -g)
+#set_source_files_properties(CLBackend.cpp PROPERTIES COMPILE_FLAGS -g)
 #set_source_files_properties(CLBuiltIns.cpp PROPERTIES COMPILE_FLAGS -g)

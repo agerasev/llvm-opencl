@@ -1,4 +1,4 @@
-;===- ./lib/Target/CBackend/TargetInfo/LLVMBuild.txt -----------*- Conf -*--===;
+;===- ./lib/Target/CLBackend/TargetInfo/LLVMBuild.txt -----------*- Conf -*--===;
 ;
 ;                     The LLVM Compiler Infrastructure
 ;
@@ -17,7 +17,7 @@
 
 [component_0]
 type = Library
-name = CBackendInfo
-parent = CBackend
+name = CLBackendInfo
+parent = CLBackend
 required_libraries = MC ScalarOpts Support Target
-add_to_library_groups = CBackend
+add_to_library_groups = CLBackend

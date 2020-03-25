@@ -25,7 +25,7 @@ def gen_spir(src, ir, opt=3):
 
 def gen_ocls(ir, dst):
     try:
-        run(["llvm-cbe", ir, "-o", dst], check=True)
+        run(["llvm-opencl", ir, "-o", dst], check=True)
     except SubprocessError as e:
         raise BackendError(ir) from e
 

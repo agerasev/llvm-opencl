@@ -16,11 +16,7 @@
 #include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
-#if LLVM_VERSION_MAJOR >= 7
 #include "llvm/CodeGen/CommandFlags.inc"
-#else
-#include "llvm/CodeGen/CommandFlags.def"
-#endif
 #include "llvm/CodeGen/LinkAllAsmWriterComponents.h"
 #include "llvm/CodeGen/LinkAllCodegenComponents.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
@@ -49,9 +45,9 @@
 #include <memory>
 using namespace llvm;
 
-extern "C" void LLVMInitializeCBackendTarget();
-extern "C" void LLVMInitializeCBackendTargetInfo();
-extern "C" void LLVMInitializeCBackendTargetMC();
+extern "C" void LLVMInitializeCLBackendTarget();
+extern "C" void LLVMInitializeCLBackendTargetInfo();
+extern "C" void LLVMInitializeCLBackendTargetMC();
 
 // General options for llc.  Other pass-specific options are specified
 // within the corresponding llc passes, and target-specific options
@@ -110,21 +106,8 @@ static ToolOutputFile *GetOutputStream(const char *TargetName,
 
       switch (FileType) {
       case TargetMachine::CGFT_AssemblyFile:
-        if (TargetName[0] == 'c') {
-          if (TargetName[1] == 0)
-            OutputFilename += ".cbe.c";
-          else if (TargetName[1] == 'p' && TargetName[2] == 'p')
-            OutputFilename += ".cpp";
-          else
-            OutputFilename += ".s";
-        } else
-          OutputFilename += ".s";
-        break;
       case TargetMachine::CGFT_ObjectFile:
-        if (OS == Triple::Win32)
-          OutputFilename += ".obj";
-        else
-          OutputFilename += ".o";
+        OutputFilename += ".gen.cl";
         break;
       case TargetMachine::CGFT_Null:
         OutputFilename += ".null";
@@ -179,9 +162,9 @@ int main(int argc, char **argv) {
   InitializeAllAsmPrinters();
   InitializeAllAsmParsers();
 
-  LLVMInitializeCBackendTarget();
-  LLVMInitializeCBackendTargetInfo();
-  LLVMInitializeCBackendTargetMC();
+  LLVMInitializeCLBackendTarget();
+  LLVMInitializeCLBackendTargetInfo();
+  LLVMInitializeCLBackendTargetMC();
 
   // Initialize codegen and IR passes used by llc so that the -print-after,
   // -print-before, and -stop-after options work.
@@ -240,7 +223,7 @@ static int compileModule(char **argv, LLVMContext &Context) {
   // Get the target specific parser.
   std::string Error;
   // Override MArch
-  MArch = "c";
+  MArch = "cl";
   const Target *TheTarget =
       TargetRegistry::lookupTarget(MArch, TheTriple, Error);
   if (!TheTarget) {
@@ -279,18 +262,7 @@ static int compileModule(char **argv, LLVMContext &Context) {
     break;
   }
 
-  TargetOptions Options;
-  Options.AllowFPOpFusion = FuseFPOps;
-  Options.UnsafeFPMath = EnableUnsafeFPMath;
-  Options.NoInfsFPMath = EnableNoInfsFPMath;
-  Options.NoNaNsFPMath = EnableNoNaNsFPMath;
-  Options.HonorSignDependentRoundingFPMathOption =
-      EnableHonorSignDependentRoundingFPMath;
-  if (FloatABIForCalls != FloatABI::Default)
-    Options.FloatABIType = FloatABIForCalls;
-  Options.NoZerosInBSS = DontPlaceZerosInBSS;
-  Options.GuaranteedTailCallOpt = EnableGuaranteedTailCallOpt;
-  Options.StackAlignmentOverride = OverrideStackAlignment;
+  TargetOptions Options = InitTargetOptionsFromCodeGenFlags();
 
   // Jackson Korba 9/30/14
   // OwningPtr<targetMachine>
@@ -301,9 +273,6 @@ static int compileModule(char **argv, LLVMContext &Context) {
   assert(mod && "Should have exited after outputting help!");
   TargetMachine &Target = *target.get();
 
-  // Disable .loc support for older OS X versions.
-  if (TheTriple.isMacOSX() && TheTriple.isMacOSXVersionLT(10, 6)) {
-  }
   // TODO: Find a replacement to this function
   /* Greg Simpson 6-09-13
   no member named setMCUseLoc
@@ -334,10 +303,7 @@ static int compileModule(char **argv, LLVMContext &Context) {
   }
 
   // Ask the target to add backend passes as necessary.
-  if (Target.addPassesToEmitFile(PM, Out->os(),
-#if LLVM_VERSION_MAJOR >= 7
-                                 nullptr,
-#endif
+  if (Target.addPassesToEmitFile(PM, Out->os(), nullptr,
                                  FileType, NoVerify)) {
     errs() << argv[0] << ": target does not support generation of this"
            << " file type!\n";

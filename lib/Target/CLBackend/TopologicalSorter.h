@@ -8,7 +8,7 @@
 //===----------------------------------------------------------------------===//
 //
 // This file declares a DFS based Topological Sorter to order dependencies in
-// the C Backend
+// the OpenCL backend
 //
 //===----------------------------------------------------------------------===//
 #ifndef TOPOLOGICALSORTER_H
@@ -17,7 +17,7 @@
 #include <llvm/ADT/Optional.h>
 #include <vector>
 
-namespace llvm_cbe {
+namespace llvm_opencl {
 
 class TopologicalSorter {
   int Size;
@@ -38,6 +38,6 @@ public:
   llvm::Optional<std::vector<int>> sort(); // Returns None if there are cycles
 };
 
-} // namespace llvm_cbe
+} // namespace llvm_opencl
 
 #endif // TOPOLOGICALSORTER_H

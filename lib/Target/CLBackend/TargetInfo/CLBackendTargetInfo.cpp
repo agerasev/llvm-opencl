@@ -1,4 +1,4 @@
-//===-- CBackendTargetInfo.cpp - CBackend Target Implementation -----------===//
+//===-- CLBackendTargetInfo.cpp - CLBackend Target Implementation -----------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,15 +7,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "../CTargetMachine.h"
+#include "../CLTargetMachine.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/TargetRegistry.h"
 using namespace llvm;
 
-Target llvm::TheCBackendTarget;
+Target llvm::TheCLBackendTarget;
 
-extern "C" void LLVMInitializeCBackendTargetInfo() {
-  RegisterTarget<> X(TheCBackendTarget, "c", "C backend", "C");
+extern "C" void LLVMInitializeCLBackendTargetInfo() {
+  RegisterTarget<> X(TheCLBackendTarget, "cl", "OpenCL backend", "CL");
 }
 
-extern "C" void LLVMInitializeCBackendTargetMC() {}
+extern "C" void LLVMInitializeCLBackendTargetMC() {}

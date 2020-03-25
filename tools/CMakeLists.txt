@@ -1,1 +1,1 @@
-add_subdirectory(llvm-cbe)
+add_subdirectory(llvm-opencl)

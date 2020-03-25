@@ -3,7 +3,7 @@
 #include <vector>
 #include <string>
 
-namespace llvm_cbe {
+namespace llvm_opencl {
   class OutModifier {
   public:
     size_t last_size;
