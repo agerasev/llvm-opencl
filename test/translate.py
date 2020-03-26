@@ -30,9 +30,9 @@ def gen_ocls(ir, dst):
         raise BackendError(ir) from e
 
 def translate(src, dst=None, opt=3, suffix=""):
-    ir = "{}.ll".format(src + suffix)
+    ir = "{}.gen.ll".format(src + suffix)
     if not dst:
-        dst = "{}.cbe.cl".format(src + suffix)
+        dst = "{}.gen.cl".format(src + suffix)
     gen_spir(src, ir, opt)
     gen_ocls(ir, dst)
     return dst

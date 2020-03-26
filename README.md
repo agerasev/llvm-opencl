@@ -44,7 +44,7 @@ If LLVM-OpenCL compiles, you should be able to run example with the following co
 export PATH=$PWD/llvm-project/llvm/build/bin:$PATH
 
 # Go to example program directory
-cd llvm-project/llvm/projects/llvm-opencl/examples/mandelbrot
+cd llvm-opencl/test/examples/mandelbrot
 
 # Generate LLVM IR code from OpenCL kernel source
 clang-8 -S -emit-llvm \
