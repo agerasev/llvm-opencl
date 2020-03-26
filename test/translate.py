@@ -13,7 +13,7 @@ class BackendError(Exception):
 def gen_spir(src, ir, opt=3):
     try:
         run([
-            "clang-8", "-x", "cl", "-S", "-emit-llvm",
+            "clang-9", "-x", "cl", "-S", "-emit-llvm",
             "--target=spir-unknown-unknown",
             "-std=cl1.2",
             "-Xclang", "-finclude-default-header",

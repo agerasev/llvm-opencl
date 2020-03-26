@@ -1490,7 +1490,7 @@ bool CWriter::doInitialization(Module &M) {
 
   TD = new DataLayout(&M);
   IL = new IntrinsicLowering(*TD);
-  IL->AddPrototypes(M);
+  //IL->AddPrototypes(M);
 
 #if 0
   std::string Triple = TheModule->getTargetTriple();
