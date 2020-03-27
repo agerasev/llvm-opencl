@@ -65,6 +65,6 @@ python3 run.py kernel.gen.cl
 ## Running tests
 
 ```bash
-cd llvm-project/llvm/projects/llvm-opencl/test
-python3 ./test.sh
+cd llvm-project/llvm/projects/llvm-opencl
+python3 -m test
 ```

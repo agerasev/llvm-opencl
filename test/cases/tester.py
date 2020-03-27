@@ -16,7 +16,7 @@ class Tester:
         raise NotImplementedError()
 
     def makeref(self):
-        self.ref = self.run(self.src)
+        return self.run(self.src)
 
     def suffix(self, **kws):
         return ".o{}".format(kws["opt"])
