@@ -14,7 +14,8 @@ class Tester(BaseTester):
 
     def run(self, src, **kws):
         n = 64
-        b = np.arange(n, dtype=cltypes.int)
-        a = np.zeros_like(b)
-        run_kernel(self.ctx, src, (n,), *[Mem(x) for x in [a, b]])
-        return (a, b)
+        c = np.arange(4*n, dtype=cltypes.float)/(2*n**0.5)
+        b = np.zeros(4*n, dtype=cltypes.int)
+        a = np.zeros(4*n, dtype=cltypes.float)
+        run_kernel(self.ctx, src, (n,), *[Mem(x) for x in [a, b, c]])
+        return (a, b, c)

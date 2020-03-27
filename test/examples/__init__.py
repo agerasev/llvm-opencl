@@ -31,7 +31,7 @@ def test(ctx, report, pattern, args):
                     try_build(ctx, src)
                     for opt in args.opt:
                         try_build(ctx, translate(
-                            src, opt=opt,
+                            src, fe={"opt": opt},
                             suffix=".o{}".format(opt)
                         ))
         except Exception as e:

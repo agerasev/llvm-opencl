@@ -5,11 +5,17 @@ import pyopencl as cl
 from pyopencl import cltypes
 
 from test.opencl import Mem, run_kernel
+from test.cases.tester import Tester as BaseTester
 
-def run(ctx, src):
-    m = 64
-    n = 4*m
-    a = np.arange(n, dtype=cltypes.int)
-    b = np.zeros_like(a)
-    run_kernel(ctx, src, (m,), *[Mem(x) for x in [a, b]])
-    return (a, b)
+
+class Tester(BaseTester):
+    def __init__(self, *args):
+        super().__init__(*args, src="source.cl")
+
+    def run(self, src, **kws):
+        m = 64
+        n = 4*m
+        a = np.arange(n, dtype=cltypes.int)
+        b = np.zeros_like(a)
+        run_kernel(self.ctx, src, (m,), *[Mem(x) for x in [a, b]])
+        return (a, b)

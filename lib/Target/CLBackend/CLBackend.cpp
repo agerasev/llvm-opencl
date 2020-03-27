@@ -596,6 +596,9 @@ CWriter::printTypeName(raw_ostream &Out, Type *Ty, bool isSigned,
       case 3:
         Out << "__local ";
         break;
+      case 4:
+        Out << ""; // generic
+        break;
       default:
 #ifndef NDEBUG
       errs() << "Invalid address space " << Ty->getPointerAddressSpace() << "\n";

@@ -1,11 +1,9 @@
 import os
 import shutil
 import importlib
-from subprocess import SubprocessError
 
 import numpy as np
 
-from test.translate import translate
 from test.walker import Walker
 from test.misc import distribute_patterns
 
@@ -60,52 +58,18 @@ class Runner(Walker):
             return children
         
         module = importlib.import_module(self.modname)
-        if not hasattr(module, "run"):
-            self.report.warn(self.modname, "no `run` function")
+        try:
+            Tester = module.Tester
+        except AttributeError:
+            self.report.warn(self.modname, "no `Tester` class")
             return
         
-        src = os.path.join(self.loc, "source.cl")
         try:
-            try:
-                ref = module.run(self.ctx, src)
-            except Exception as e:
-                raise Exception(src) from e
-
-            for i in range(self.args.recurse):
-                dst = None
-                for opt in self.args.opt:
-                    
-                    dst = translate(
-                        src, opt=opt,
-                        suffix=".o{}".format(opt)
-                    )
-
-                    try:
-                        res = module.run(self.ctx, dst)
-                    except Exception as e:
-                        raise Exception(dst) from e
-
-                    try:
-                        if hasattr(module, "compare"):
-                            module.compare(ref, res)
-                        else:
-                            assert len(ref) == len(res)
-                            for i, (f, s) in enumerate(zip(ref, res)):
-                                try:
-                                    assert np.allclose(f, s)
-                                except AssertionError as e:
-                                    raise AssertionError(
-                                        "Mismatch in buffer {}".format(i)
-                                    ) from e
-                    except AssertionError as e:
-                        raise AssertionError(dst) from e
-
-                src = dst
+            Tester(self.ctx, self.loc).test_all(self.args)
         except Exception as e:
             self.report.fail(self.modname, e)
         else:
             self.report.ok(self.modname)
-
 
 def test(ctx, report, patterns, args):
     Runner(os.path.split(__file__)[0], ctx, __name__, report, patterns, args).walk()

@@ -10,12 +10,12 @@ class BackendError(Exception):
     def __init__(self, message):
         super().__init__(message)
 
-def gen_spir(src, ir, opt=3):
+def gen_spir(src, ir, opt=3, std="cl1.2"):
     try:
         run([
             "clang-9", "-x", "cl", "-S", "-emit-llvm",
             "--target=spir-unknown-unknown",
-            "-std=cl1.2",
+            "-std={}".format(std),
             "-Xclang", "-finclude-default-header",
             "-O{}".format(opt),
             src, "-o", ir,
@@ -29,10 +29,10 @@ def gen_ocls(ir, dst):
     except SubprocessError as e:
         raise BackendError(ir) from e
 
-def translate(src, dst=None, opt=3, suffix=""):
+def translate(src, dst=None, suffix="", fe={}, be={}):
     ir = "{}.gen.ll".format(src + suffix)
     if not dst:
         dst = "{}.gen.cl".format(src + suffix)
-    gen_spir(src, ir, opt)
-    gen_ocls(ir, dst)
+    gen_spir(src, ir, **fe)
+    gen_ocls(ir, dst, **be)
     return dst
