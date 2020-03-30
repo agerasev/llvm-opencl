@@ -9,7 +9,10 @@ class Tester:
     def __init__(self, ctx, loc, src="source.cl"):
         self.ctx = ctx
         self.loc = loc
-        self.src = os.path.join(loc, src)
+        if isinstance(src, str):
+            self.src = os.path.join(loc, src)
+        else:
+            self.src = [os.path.join(loc, s) for s in src]
         self.ref = None
 
     def run(self, src, **kws):

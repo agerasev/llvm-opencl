@@ -10,6 +10,10 @@ class BackendError(Exception):
     def __init__(self, message):
         super().__init__(message)
 
+class LinkError(Exception):
+    def __init__(self, message):
+        super().__init__(message)
+
 def gen_spir(src, ir, opt=3, std="cl1.2"):
     try:
         run([
@@ -23,7 +27,7 @@ def gen_spir(src, ir, opt=3, std="cl1.2"):
     except SubprocessError as e:
         raise FrontendError(src) from e
 
-def gen_ocls(ir, dst):
+def gen_oclc(ir, dst):
     try:
         run(["llvm-opencl", ir, "-o", dst], check=True)
     except SubprocessError as e:
@@ -34,5 +38,12 @@ def translate(src, dst=None, suffix="", fe={}, be={}):
     if not dst:
         dst = "{}.gen.cl".format(src + suffix)
     gen_spir(src, ir, **fe)
-    gen_ocls(ir, dst, **be)
+    gen_oclc(ir, dst, **be)
+    return dst
+
+def link(srcs, dst, suffix=""):
+    try:
+        run(["llvm-link", "-S", *srcs, "-o", dst], check=True)
+    except SubprocessError as e:
+        raise LinkError(str(srcs)) from e
     return dst
