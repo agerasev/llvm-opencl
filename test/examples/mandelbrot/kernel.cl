@@ -64,9 +64,9 @@ __kernel void render(
     float3 color = (float3)(0.0f);
     // Iterate over supersampling points
     for (uint j = 0; j < ssf; ++j) {
-        sc.y = c.y + (j + 0.5)/(height*ssf);
+        sc.y = c.y + (j + 0.5f)/(height*ssf);
         for (uint i = 0; i < ssf; ++i) {
-            sc.x = c.x + (i + 0.5)/(height*ssf);
+            sc.x = c.x + (i + 0.5f)/(height*ssf);
             // Apply transformation and sample
             float n = sample(cmul(sc, zoom) - shift, depth);
             if (n > 0.0f) {
