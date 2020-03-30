@@ -1,3 +1,4 @@
+import os
 import atexit
 
 import colorama
@@ -44,6 +45,7 @@ class Report:
 def run(args):
     colorama.init()
     atexit.register(lambda: colorama.deinit())
+    os.environ["PYOPENCL_COMPILER_OUTPUT"] = "1"
 
     if args.clean:
         clean()

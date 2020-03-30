@@ -10,7 +10,7 @@ from test.cases.tester import Tester as BaseTester
 
 class Tester(BaseTester):
     def __init__(self, *args):
-        super().__init__(*args, src="source.clpp")
+        super().__init__(*args, src="source.cpp.cl")
         self.n = 64
 
     def translate(self, src, **kws):
