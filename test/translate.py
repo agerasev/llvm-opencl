@@ -15,6 +15,13 @@ class LinkError(Exception):
     def __init__(self, message):
         super().__init__(message)
 
+def check_rustc():
+    try:
+        run(["rustc", "-V"], check=True)
+    except:
+        return False
+    else:
+        return True
 
 def frontend(src, ir, opt=3, ty=None, std=None):
     try:

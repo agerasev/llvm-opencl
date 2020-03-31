@@ -10,14 +10,8 @@ from test.cases.tester import Tester as BaseTester
 
 class Tester(BaseTester):
     def __init__(self, *args):
-        super().__init__(*args, src="source.cpp.cl")
+        super().__init__(*args, src=("kernel.cl", "source.cpp"))
         self.n = 64
-
-    def translate(self, src, **kws):
-        return translate(
-            src, suffix=self.suffix(**kws),
-            fe={"opt": kws["opt"], "std": "clc++"},
-        )
 
     def makeref(self):
         return (

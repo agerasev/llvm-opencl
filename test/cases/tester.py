@@ -21,9 +21,6 @@ class Tester:
     def makeref(self):
         return self.run(self.src)
 
-    def suffix(self, **kws):
-        return ".o{}".format(kws["opt"])
-
     def translate(self, src, **kws):
         opt = kws["opt"]
         fe = {"opt": opt}

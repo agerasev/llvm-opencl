@@ -28,7 +28,7 @@ def test(ctx, report, pattern, args):
             for opt in args.opt:
                 res = m.run(ctx, translate(
                     src, fe={"opt": opt},
-                    suffix=".o{}".format(opt)
+                    suffix="o{}".format(opt)
                 ))
                 m.compare(ref, res)
         except Exception as e:

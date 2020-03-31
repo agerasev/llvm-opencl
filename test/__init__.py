@@ -19,6 +19,7 @@ class Report:
         self.passed = 0
         self.failed = 0
         self.warning = 0
+        self.skipped = 0
         self.eof = eof
 
     def ok(self, name):
@@ -31,6 +32,10 @@ class Report:
         if self.eof:
             raise exc
     
+    def skip(self, name):
+        self.skipped += 1
+        print(("[skip] {}").format(name.split(".", 1)[1]))
+    
     def warn(self, name, msg):
         self.warning += 1
         print(("[ {}warn{} ] {}: {}").format(CY, C_, name.split(".", 1)[1], msg))
@@ -38,8 +43,9 @@ class Report:
     def print_result(self):
         print(CG if self.failed == 0 else CR, end="")
         print("done, {} passed, {} failed".format(self.passed, self.failed), end="")
-        print("{}, {} warnings".format(CY, self.warning) if self.warning > 0 else "")
-        print(C_, end="")
+        print("{}, {} skipped".format(C_, self.skipped) if self.skipped > 0 else "", end="")
+        print("{}, {} warnings".format(CY, self.warning) if self.warning > 0 else "", end="")
+        print(C_)
 
 
 def run(args):

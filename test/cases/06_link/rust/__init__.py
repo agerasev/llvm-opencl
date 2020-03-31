@@ -8,8 +8,10 @@ import pyopencl as cl
 from pyopencl import cltypes
 
 from test.opencl import Mem, run_kernel
+from test.translate import check_rustc
 from test.cases.tester import Tester as BaseTester
 
+skip = True
 
 class Tester(BaseTester):
     def __init__(self, *args):
@@ -26,3 +28,8 @@ class Tester(BaseTester):
         b = np.zeros_like(a)
         run_kernel(self.ctx, src, (self.n,), *[Mem(x) for x in [a, b]])
         return (a, b)
+
+    def test_all(self, *args, **kwargs):
+        if not check_rustc():
+            raise Warning("unable to find `rustc`")
+        super().test_all(*args, **kwargs)

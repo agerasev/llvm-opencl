@@ -26,12 +26,6 @@ class Tester(BaseTester):
             np.arange(self.n, dtype=cltypes.float)**2,
         ]
 
-    def translate(self, src, **kws):
-        return translate(
-            src, suffix=self.suffix(**kws),
-            fe={"opt": kws["opt"], "std": "clc++"},
-        )
-
     def makeref(self):
         return self.output
 
