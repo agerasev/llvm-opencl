@@ -9,7 +9,10 @@ class Tester:
     def __init__(self, ctx, loc, src="source.cl"):
         self.ctx = ctx
         self.loc = loc
-        self.src = os.path.join(loc, src)
+        if isinstance(src, str):
+            self.src = os.path.join(loc, src)
+        else:
+            self.src = [os.path.join(loc, s) for s in src]
         self.ref = None
 
     def run(self, src, **kws):
@@ -18,15 +21,12 @@ class Tester:
     def makeref(self):
         return self.run(self.src)
 
-    def suffix(self, **kws):
-        return ".o{}".format(kws["opt"])
-
     def translate(self, src, **kws):
         opt = kws["opt"]
-        return translate(
-            src, fe={"opt": opt},
-            suffix=".o{}".format(opt)
-        )
+        fe = {"opt": opt}
+        if "std" in kws:
+            fe["std"] = kws["std"]
+        return translate(src, suffix="o{}".format(opt), fe=fe)
 
     def check(self, res, **kws):
         assert len(self.ref) == len(res)

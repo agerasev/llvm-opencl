@@ -54,10 +54,19 @@ class Runner(Walker):
     
     def process(self, files, dirs):
         children = self.fork(dirs)
+
+        module = importlib.import_module(self.modname)
+        
+        try:
+            if module.skip:
+                self.report.skip(self.modname)
+                return
+        except AttributeError:
+            pass
+
         if len(children) > 0:
             return children
         
-        module = importlib.import_module(self.modname)
         try:
             Tester = module.Tester
         except AttributeError:
@@ -66,6 +75,8 @@ class Runner(Walker):
         
         try:
             Tester(self.ctx, self.loc).test_all(self.args)
+        except Warning as w:
+            self.report.warn(self.modname, str(w))
         except Exception as e:
             self.report.fail(self.modname, e)
         else:

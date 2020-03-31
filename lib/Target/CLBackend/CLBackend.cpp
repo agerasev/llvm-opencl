@@ -583,21 +583,22 @@ CWriter::printTypeName(raw_ostream &Out, Type *Ty, bool isSigned,
 
   case Type::PointerTyID: {
     Type *ElTy = Ty->getPointerElementType();
+    printTypeName(Out, ElTy);
     switch (Ty->getPointerAddressSpace()) {
       case 0:
-        Out << "__private ";
+        Out << " __private";
         break;
       case 1:
-        Out << "__global ";
+        Out << " __global";
         break;
       case 2:
-        Out << "__constant ";
+        Out << " __constant";
         break;
       case 3:
-        Out << "__local ";
+        Out << " __local";
         break;
       case 4:
-        Out << ""; // generic
+        Out << ""; // OpenCL 2.x generic address space
         break;
       default:
 #ifndef NDEBUG
@@ -606,7 +607,8 @@ CWriter::printTypeName(raw_ostream &Out, Type *Ty, bool isSigned,
       errorWithMessage("Encountered Invalid Address Space");
       break;
     }
-    return printTypeName(Out, ElTy) << '*';
+    Out << "*";
+    return Out;
   }
 
   case Type::ArrayTyID: {
