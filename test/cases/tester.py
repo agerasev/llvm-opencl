@@ -26,10 +26,10 @@ class Tester:
 
     def translate(self, src, **kws):
         opt = kws["opt"]
-        return translate(
-            src, fe={"opt": opt},
-            suffix=".o{}".format(opt)
-        )
+        fe = {"opt": opt}
+        if "std" in kws:
+            fe["std"] = kws["std"]
+        return translate(src, suffix="o{}".format(opt), fe=fe)
 
     def check(self, res, **kws):
         assert len(self.ref) == len(res)
