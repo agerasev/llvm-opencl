@@ -428,8 +428,12 @@ raw_ostream &CWriter::printSimpleType(raw_ostream &Out, Type *Ty,
 
 void CWriter::printWithCast(
   raw_ostream &Out, Type *DstTy, bool isSigned,
-  std::function<void()> print_inner
+  std::function<void()> print_inner, bool cond
 ) {
+  if (!cond) {
+    print_inner();
+    return;
+  }
   if (DstTy->isVectorTy()) {
     Out << "convert_";
     printTypeName(Out, DstTy, isSigned);
@@ -447,27 +451,9 @@ void CWriter::printWithCast(
 
 void CWriter::printWithCast(
   raw_ostream &Out, Type *DstTy, bool isSigned,
-  const std::string &inner
-) {
-  printWithCast(Out, DstTy, isSigned, [&]() { Out << inner; });
-}
-
-void CWriter::printWithCastIf(
-  raw_ostream &Out, Type *DstTy, bool isSigned,
-  std::function<void()> print_inner, bool cond
-) {
-  if (cond) {
-    printWithCast(Out, DstTy, isSigned, print_inner);
-  } else {
-    print_inner();
-  }
-}
-
-void CWriter::printWithCastIf(
-  raw_ostream &Out, Type *DstTy, bool isSigned,
   const std::string &inner, bool cond
 ) {
-  printWithCastIf(Out, DstTy, isSigned, [&]() { Out << inner; }, cond);
+  printWithCast(Out, DstTy, isSigned, [&]() { Out << inner; }, cond);
 }
 
 unsigned int CWriter::getNextPowerOf2(unsigned int width) {
@@ -493,9 +479,11 @@ uint64_t CWriter::getIntPadded(uint64_t value, unsigned int width) {
 // So we need to contain such integers in larger power-of-2 types.
 // In order to have proper result in cast and arithmetic operations
 // we need to fill unused bits with the most significant bit of integer.
-void CWriter::printPadded(raw_ostream &Out, Type *Ty,
-                            std::function<void()> print_inner) {
-  if(!Ty->isIntOrIntVectorTy()) {
+void CWriter::printPadded(
+  raw_ostream &Out, Type *Ty,
+  std::function<void()> print_inner, bool cond
+) {
+  if(!cond || !Ty->isIntOrIntVectorTy()) {
     print_inner();
     return;
   }
@@ -527,13 +515,18 @@ void CWriter::printPadded(raw_ostream &Out, Type *Ty,
   }
 }
 
-void CWriter::printPadded(raw_ostream &Out, Type *Ty, const std::string &inner) {
-  printPadded(Out, Ty, [&]() { Out << inner; });
+void CWriter::printPadded(
+  raw_ostream &Out, Type *Ty,
+  const std::string &inner, bool cond
+) {
+  printPadded(Out, Ty, [&]() { Out << inner; }, cond);
 }
 
-void CWriter::printUnpadded(raw_ostream &Out, Type *Ty,
-                            std::function<void()> print_inner) {
-  if(!Ty->isIntOrIntVectorTy()) {
+void CWriter::printUnpadded(
+  raw_ostream &Out, Type *Ty,
+  std::function<void()> print_inner, bool cond
+) {
+  if(!cond || !Ty->isIntOrIntVectorTy()) {
     print_inner();
     return;
   }
@@ -554,8 +547,11 @@ void CWriter::printUnpadded(raw_ostream &Out, Type *Ty,
   }
 }
 
-void CWriter::printUnpadded(raw_ostream &Out, Type *Ty, const std::string &inner) {
-  printUnpadded(Out, Ty, [&]() { Out << inner; });
+void CWriter::printUnpadded(
+  raw_ostream &Out, Type *Ty,
+  const std::string &inner, bool cond
+) {
+  printUnpadded(Out, Ty, [&]() { Out << inner; }, cond);
 }
 
 // Pass the Type* and the variable name and this prints out the variable
@@ -1889,8 +1885,8 @@ void CWriter::generateHeader(Module &M) {
       Out << "  return ";
       printPadded(Out, DstTy, [&]() {
         printWithCast(Out, DstTy, false, [&]() {
-          printWithCastIf(Out, DstTy, DstSigned, [&]() {
-            printWithCastIf(Out, SrcTy, SrcSigned, [&]() {
+          printWithCast(Out, DstTy, DstSigned, [&]() {
+            printWithCast(Out, SrcTy, SrcSigned, [&]() {
               if (SrcSigned) {
                 Out << "in";
               } else {
@@ -1946,8 +1942,9 @@ void CWriter::generateHeader(Module &M) {
 
     Out << " {\n  return ";
 
+
     printPadded(Out, OpTy, [&]() {
-      printWithCastIf(Out, OpTy, false, [&]() {
+      printWithCast(Out, OpTy, false, [&]() {
         if (opcode == BinaryNeg || opcode == BinaryNot) {
           switch(opcode) {
           case BinaryNeg:
@@ -1957,13 +1954,19 @@ void CWriter::generateHeader(Module &M) {
             Out << "~";
             break;
           }
-          printWithCastIf(Out, OpTy, isSigned, "a", isSigned);
+          printWithCast(Out, OpTy, isSigned, "a", isSigned);
         } else if (opcode == Instruction::FRem) {
           // Output a call to fmod instead of emitting a%b
           Out << "fmod(a, b)";
         } else {
           Out << "(";
-          printWithCastIf(Out, OpTy, isSigned, "a", isSigned);
+          if (isSigned) {
+            printWithCast(Out, OpTy, isSigned, "a");
+          } else if (shouldCast) {
+            printUnpadded(Out, OpTy, "a");
+          } else {
+            Out << "a";
+          }
           Out << " ";
           switch (opcode) {
           case Instruction::Add:
@@ -2011,7 +2014,13 @@ void CWriter::generateHeader(Module &M) {
             errorWithMessage("invalid operator type");
           }
           Out << " ";
-          printWithCastIf(Out, OpTy, isSigned, "b", isSigned);
+          if (isSigned) {
+            printWithCast(Out, OpTy, isSigned, "b");
+          } else if (shouldCast) {
+            printUnpadded(Out, OpTy, "b");
+          } else {
+            Out << "b";
+          }
           Out << ")";
         }
       }, isSigned);

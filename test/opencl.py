@@ -9,7 +9,7 @@ class Mem:
     def __init__(self, content):
         self.content = content
 
-def run_kernel(ctx, src_file, shape, *args, name="kernel_main"):
+def run_kernel(ctx, src_file, shape, *args, name="kernel_main", src=None):
     queue = cl.CommandQueue(ctx)
 
     mf = cl.mem_flags
@@ -21,8 +21,14 @@ def run_kernel(ctx, src_file, shape, *args, name="kernel_main"):
             karg = cl.Buffer(ctx, mf.READ_WRITE | mf.COPY_HOST_PTR, hostbuf=arg.content)
         kargs.append(karg)
 
-    with open(src_file, "r") as f:
-        src = f.read()
+    if not src:
+        src = ""
+        if isinstance(src_file, str):
+            src_file = [src_file]
+        for sf in src_file:
+            with open(sf, "r") as f:
+                src += f.read() + "\n"
+    
     prg = cl.Program(ctx, src).build()
     queue.flush()
     queue.finish()

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from os.path import split, join
+from shutil import copyfile
 from subprocess import run, SubprocessError
 
 class FrontendError(Exception):
@@ -69,6 +70,8 @@ def frontend(src, ir, opt=3, ty=None, std=None):
                 args.append("-O")
             args.extend([src, "-o", ir])
             run(args, check=True)
+        elif (ty and ty == "spir") or (not ty and src.endswith(".ll")):
+            copyfile(src, ir)
         else:
             if ty:
                 raise Exception("Unknown source type: {}".format(ty))
