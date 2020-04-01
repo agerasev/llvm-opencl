@@ -90,28 +90,12 @@ class CWriter : public FunctionPass, public InstVisitor<CWriter> {
 
   unsigned LastAnnotatedSourceLine = 0;
 
-  struct {
-    bool UnalignedLoad : 1;
-    bool BitCastUnion : 1;
-  } UsedHeaders;
-
   CLBuiltIns builtins;
-
-#define USED_HEADERS_FLAG(Name)                                                \
-  void headerUse##Name() { UsedHeaders.Name = true; }                          \
-  bool headerInc##Name() const { return UsedHeaders.Name; }
-
-  USED_HEADERS_FLAG(UnalignedLoad)
-  USED_HEADERS_FLAG(BitCastUnion)
-
-  void generateCompilerSpecificCode(raw_ostream &Out, const DataLayout *) const;
 
 public:
   static char ID;
   explicit CWriter(raw_ostream &o)
-      : FunctionPass(ID), OutHeaders(_OutHeaders), Out(_Out), FileOut(o) {
-    memset(&UsedHeaders, 0, sizeof(UsedHeaders));
-  }
+      : FunctionPass(ID), OutHeaders(_OutHeaders), Out(_Out), FileOut(o) {}
 
   virtual StringRef getPassName() const { return "OpenCL backend"; }
 
@@ -259,9 +243,7 @@ private:
 
   void visitLoadInst(LoadInst &I);
   void visitStoreInst(StoreInst &I);
-  void visitFenceInst(FenceInst &I);
   void visitGetElementPtrInst(GetElementPtrInst &I);
-  void visitVAArgInst(VAArgInst &I);
 
   void visitInsertElementInst(InsertElementInst &I);
   void visitExtractElementInst(ExtractElementInst &I);

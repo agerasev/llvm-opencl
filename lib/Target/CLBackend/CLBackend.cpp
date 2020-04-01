@@ -1392,12 +1392,6 @@ void CWriter::writeOperandWithCast(Value *Operand, ICmpInst &Cmp) {
   writeOperand(Operand);
   Out << ")";
 }
-// TODO_: Remove?
-static void defineUnalignedLoad(raw_ostream &Out) {
-  // Define unaligned-load helper macro
-  Out << "#define __UNALIGNED_LOAD__(type, align, op) ((struct { type data "
-         "__attribute__((packed, aligned(align))); }*)op)->data\n";
-}
 
 /// FindStaticTors - Given a static ctor/dtor list, unpack its contents into
 /// the StaticTors set.
@@ -1448,42 +1442,6 @@ static SpecialGlobalClass getGlobalVariableClass(GlobalVariable *GV) {
     return NotPrinted;
 
   return NotSpecial;
-}
-
-/*
-// TODO_: Remove?
-// PrintEscapedString - Print each character of the specified string, escaping
-// it if it is not printable or if it is an escape char.
-static void PrintEscapedString(const char *Str, unsigned Length,
-                               raw_ostream &Out) {
-  for (unsigned i = 0; i != Length; ++i) {
-    unsigned char C = Str[i];
-    if (isprint(C) && C != '\\' && C != '"')
-      Out << C;
-    else if (C == '\\')
-      Out << "\\\\";
-    else if (C == '\"')
-      Out << "\\\"";
-    else if (C == '\t')
-      Out << "\\t";
-    else
-      Out << "\\x" << hexdigit(C >> 4) << hexdigit(C & 0x0F);
-  }
-}
-
-// PrintEscapedString - Print each character of the specified string, escaping
-// it if it is not printable or if it is an escape char.
-static void PrintEscapedString(const std::string &Str, raw_ostream &Out) {
-  PrintEscapedString(Str.c_str(), Str.size(), Out);
-}
-*/
-
-// generateCompilerSpecificCode - This is where we add conditional compilation
-// directives to cater to specific compilers as need be.
-void CWriter::generateCompilerSpecificCode(raw_ostream &Out,
-                                           const DataLayout *) const {
-  if (headerIncUnalignedLoad())
-    defineUnalignedLoad(Out);
 }
 
 bool CWriter::doInitialization(Module &M) {
@@ -1598,7 +1556,6 @@ void CWriter::generateHeader(Module &M) {
       switch (I->getIntrinsicID()) {
       case Intrinsic::memset:
       case Intrinsic::memcpy:
-      case Intrinsic::memmove:
       case Intrinsic::fmuladd:
         intrinsicsToDefine.push_back(&*I);
         continue;
@@ -2108,8 +2065,6 @@ void CWriter::generateHeader(Module &M) {
 
   if (!M.empty())
     Out << "\n\n/* Function Bodies */\n";
-
-  generateCompilerSpecificCode(OutHeaders, TD);
 }
 
 void CWriter::declareOneGlobalVariable(GlobalVariable *I) {
@@ -2132,31 +2087,10 @@ void CWriter::declareOneGlobalVariable(GlobalVariable *I) {
   if (IsOveraligned)
     Out << " __attribute__((aligned(" << Alignment << ")))";
 
-  // If the initializer is not null, emit the initializer.  If it is null,
-  // we try to avoid emitting large amounts of zeros.  The problem with
-  // this, however, occurs when the variable has weak linkage.  In this
-  // case, the assembler will complain about the variable being both weak
-  // and common, so we disable this optimization.
-  // FIXME common linkage should avoid this problem.
+  // If the initializer is not null, emit the initializer.
   if (!I->getInitializer()->isNullValue()) {
     Out << " = ";
     writeOperand(I->getInitializer(), ContextStatic);
-  } else if (I->hasWeakLinkage()) {
-    // We have to specify an initializer, but it doesn't have to be
-    // complete.  If the value is an aggregate, print out { 0 }, and let
-    // the compiler figure out the rest of the zeros.
-    Out << " = ";
-    if (I->getInitializer()->getType()->isStructTy() ||
-        I->getInitializer()->getType()->isVectorTy()) {
-      Out << "{ 0 }";
-    } else if (I->getInitializer()->getType()->isArrayTy()) {
-      // As with structs and vectors, but with an extra set of braces
-      // because arrays are wrapped in structs.
-      Out << "{ { 0 } }";
-    } else {
-      // Just print it out normally.
-      writeOperand(I->getInitializer(), ContextStatic);
-    }
   }
   Out << ";\n";
 }
@@ -2207,24 +2141,9 @@ void CWriter::printFPConstantValue(raw_ostream &Out, const ConstantFP *FPC,
   }
 }
 
-// TODO_: Replace with `as_type()`
-static void defineBitCastUnion(raw_ostream &Out) {
-  Out << "/* Helper union for bitcasts */\n";
-  Out << "typedef union {\n";
-  Out << "  uint Int32;\n";
-  Out << "  ulong Int64;\n";
-  Out << "  float Float;\n";
-  Out << "  double Double;\n";
-  Out << "} llvmBitCastUnion;\n";
-}
-
 /// printSymbolTable - Run through symbol table looking for type names.  If a
 /// type name is found, emit its declaration...
 void CWriter::printModuleTypes(raw_ostream &Out) {
-  if (headerIncBitCastUnion()) {
-    defineBitCastUnion(Out);
-  }
-
   // Keep track of which types have been printed so far.
   std::set<Type *> TypesPrinted;
 
@@ -2424,10 +2343,7 @@ void CWriter::printFunction(Function &F) {
     // of a union to do the BitCast. This is separate from the need for a
     // variable to hold the result of the BitCast.
     if (isFPIntBitCast(*I)) {
-      headerUseBitCastUnion();
-      Out << "  llvmBitCastUnion " << GetValueName(&*I)
-          << "__BITCAST_TEMPORARY;\n";
-      PrintedVar = true;
+      errorWithMessage("Bit cast is not implemented");
     }
   }
 
@@ -2580,14 +2496,6 @@ void CWriter::visitSwitchInst(SwitchInst &SI) {
     Out << "  }\n";
   }
   Out << "\n";
-}
-
-void CWriter::visitIndirectBrInst(IndirectBrInst &IBI) {
-  CurInstr = &IBI;
-
-  Out << "  goto *(void*)(";
-  writeOperand(IBI.getOperand(0));
-  Out << ");\n";
 }
 
 bool CWriter::isGotoCodeNecessary(BasicBlock *From, BasicBlock *To) {
@@ -2818,8 +2726,6 @@ void CWriter::printIntrinsicDefinition(FunctionType *funT, unsigned Opcode,
         << "  }\n";
     break;
   case Intrinsic::memcpy:
-  case Intrinsic::memmove:
-    // TODO_: Properly implement memmove
     Out << "  for (uint i = 0; i < c; ++i) {\n"
         << "    a[i] = b[i];\n"
         << "  }\n";
@@ -2860,7 +2766,6 @@ bool CWriter::lowerIntrinsics(Function &F) {
           case Intrinsic::dbg_declare:
           case Intrinsic::memset:
           case Intrinsic::memcpy:
-          case Intrinsic::memmove:
           case Intrinsic::fmuladd:
             // We directly implement these intrinsics
             break;
@@ -2927,40 +2832,7 @@ void CWriter::visitCallInst(CallInst &I) {
   if (I.isTailCall())
     Out << " /*tail*/ ";
 
-  // If this is an indirect call to a struct return function, we need to cast
-  // the pointer. Ditto for indirect calls with byval arguments.
-  bool NeedsCast =
-      (hasByVal || isStructRet || I.getCallingConv() != CallingConv::C) &&
-      !isa<Function>(Callee);
-
-  // GCC is a real PITA.  It does not permit codegening casts of functions to
-  // function pointers if they are in a call (it generates a trap instruction
-  // instead!).  We work around this by inserting a cast to void* in between
-  // the function and the function pointer cast.  Unfortunately, we can't just
-  // form the constant expression here, because the folder will immediately
-  // nuke it.
-  //
-  // Note finally, that this is completely unsafe.  ANSI C does not guarantee
-  // that void* and function pointers have the same size. :( To deal with this
-  // in the common case, we handle casts where the number of arguments passed
-  // match exactly.
-  if (ConstantExpr *CE = dyn_cast<ConstantExpr>(Callee))
-    if (CE->isCast())
-      if (Function *RF = dyn_cast<Function>(CE->getOperand(0))) {
-        NeedsCast = true;
-        Callee = RF;
-      }
-
-  if (NeedsCast) {
-    // Ok, just cast the pointer type.
-    Out << "((";
-    printTypeName(Out, I.getCalledValue()->getType()->getPointerElementType(),
-                  false, std::make_pair(PAL, I.getCallingConv()));
-    Out << "*)(void*)";
-  }
   writeOperand(Callee);
-  if (NeedsCast)
-    Out << ')';
 
   Out << '(';
 
@@ -3011,7 +2883,6 @@ bool CWriter::visitBuiltinCall(CallInst &I, Intrinsic::ID ID) {
     return true; // ignore these intrinsics
   case Intrinsic::memset:
   case Intrinsic::memcpy:
-  case Intrinsic::memmove:
   case Intrinsic::fmuladd:
     return false; // these use the normal function call emission
   default:
@@ -3084,27 +2955,18 @@ void CWriter::writeMemoryAccess(Value *Operand, Type *OperandType,
   bool IsUnaligned =
       Alignment && Alignment < TD->getABITypeAlignment(OperandType);
 
-  if (!IsUnaligned) {
-    Out << '*';
-    if (IsVolatile) {
-      Out << "(volatile ";
-      printTypeName(Out, OperandType, false);
-      Out << "*)";
-    }
-  } else if (IsUnaligned) {
-    headerUseUnalignedLoad();
-    Out << "__UNALIGNED_LOAD__(";
+  if (IsUnaligned) {
+    errorWithMessage("Unaligned memory access operations not supported");
+  }
+
+  Out << '*';
+  if (IsVolatile) {
+    Out << "(volatile ";
     printTypeName(Out, OperandType, false);
-    if (IsVolatile)
-      Out << " volatile";
-    Out << ", " << Alignment << ", ";
+    Out << "*)";
   }
 
   writeOperand(Operand);
-
-  if (IsUnaligned) {
-    Out << ")";
-  }
 }
 
 void CWriter::visitLoadInst(LoadInst &I) {
@@ -3128,48 +2990,10 @@ void CWriter::visitStoreInst(StoreInst &I) {
   });
 }
 
-void CWriter::visitFenceInst(FenceInst &I) {
-  Out << "__atomic_thread_fence(";
-  switch (I.getOrdering()) {
-  case AtomicOrdering::Acquire:
-    Out << "__ATOMIC_ACQUIRE";
-    break;
-  case AtomicOrdering::Release:
-    Out << "__ATOMIC_RELEASE";
-    break;
-  case AtomicOrdering::AcquireRelease:
-    Out << "__ATOMIC_ACQ_REL";
-    break;
-  case AtomicOrdering::SequentiallyConsistent:
-    Out << "__ATOMIC_SEQ_CST";
-    break;
-  case AtomicOrdering::NotAtomic:
-  case AtomicOrdering::Unordered:
-  case AtomicOrdering::Monotonic:
-    Out << "__ATOMIC_RELAXED";
-    break;
-  /*
-  default:
-    errorWithMessage("Unhandled atomic ordering for fence instruction");
-  */
-  }
-  Out << ");\n";
-}
-
 void CWriter::visitGetElementPtrInst(GetElementPtrInst &I) {
   CurInstr = &I;
 
   printGEPExpression(I.getPointerOperand(), gep_type_begin(I), gep_type_end(I));
-}
-
-void CWriter::visitVAArgInst(VAArgInst &I) {
-  CurInstr = &I;
-
-  Out << "va_arg(*(va_list*)";
-  writeOperand(I.getOperand(0));
-  Out << ", ";
-  printTypeName(Out, I.getType());
-  Out << ");\n ";
 }
 
 void CWriter::visitInsertElementInst(InsertElementInst &I) {
