@@ -149,15 +149,16 @@ raw_ostream &CWriter::printTypeString(raw_ostream &Out, Type *Ty) {
     TypedefDeclTypes.insert(Ty);
 
     if (!ST->isLiteral() && !ST->getName().empty())
-      return Out << "struct_" << CBEMangle(ST->getName());
+      return Out << CBEMangle(ST->getName());
 
     unsigned id = UnnamedStructIDs.getOrInsert(ST);
     return Out << "unnamed_" + utostr(id);
   }
 
-  if (Ty->isPointerTy()) {
-    Out << "p";
-    return printTypeString(Out, Ty->getPointerElementType());
+  PointerType *PTy = dyn_cast<PointerType>(Ty);
+  if (PTy) {
+    Out << "p" << PTy->getAddressSpace();
+    return printTypeString(Out, PTy->getElementType());
   }
 
   switch (Ty->getTypeID()) {
@@ -1772,7 +1773,7 @@ void CWriter::generateHeader(Module &M) {
                        SrcTy->getPointerAddressSpace());
         Out << "  return (";
         printTypeName(Out, DstTy);
-        Out << ")in;";
+        Out << ")in;\n";
       } else if (DstTy->isIntOrIntVectorTy() || DstTy->isFPOrFPVectorTy()) {
         Out << "  return as_";
         printTypeName(Out, DstTy);
@@ -2685,14 +2686,14 @@ void CWriter::printIntrinsicDefinition(FunctionType *funT, unsigned Opcode,
     break;
   // TODO_: Use list of directly implemented intrinsics
   case Intrinsic::fmuladd:
-    Out << "  return fma(a, b, c);";
+    Out << "  return fma(a, b, c);\n";
     break;
   default:
     errs() << "Unsupported Intrinsic: " << Opcode << "\n";
     errorWithMessage("unsupported instrinsic");
   }
 
-  Out << "\n}\n";
+  Out << "}\n";
 }
 
 void CWriter::printIntrinsicDefinition(Function &F, raw_ostream &Out) {
@@ -2905,7 +2906,11 @@ void CWriter::writeMemoryAccess(Value *Operand, Type *OperandType,
       Alignment && Alignment < TD->getABITypeAlignment(OperandType);
 
   if (IsUnaligned) {
-    errorWithMessage("Unaligned memory access operations not supported");
+    outs() << "Warning: unaligned memory access:\n" << *CurInstr;
+    outs() << "\nat ";
+    CurInstr->getDebugLoc().print(outs());
+    outs() << "\n";
+    //errorWithMessage("Unaligned memory access not supported");
   }
 
   Out << '*';
