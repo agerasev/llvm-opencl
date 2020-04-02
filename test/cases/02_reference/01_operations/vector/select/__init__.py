@@ -14,9 +14,12 @@ class Tester(BaseTester):
 
     def run(self, src, **kws):
         n = 64
-        a = np.arange(4*n, dtype=cltypes.int)
-        b = np.arange(4*n, dtype=cltypes.int) - 4*n
-        c = (np.arange(4*n, dtype=cltypes.int) % 2) - 1
-        d = np.zeros(4*n, dtype=cltypes.int)
-        run_kernel(self.ctx, src, (n,), *[Mem(x) for x in [a, b, c, d]])
-        return (a, b, c, d)
+        buf = [
+            np.arange(4*n, dtype=cltypes.int),
+            np.arange(4*n, dtype=cltypes.int) - 4*n,
+            (np.arange(4*n, dtype=cltypes.int) % 2) - 1,
+            np.zeros(4*n, dtype=cltypes.int),
+            np.zeros(4*n, dtype=cltypes.int),
+        ]
+        run_kernel(self.ctx, src, (n,), *[Mem(x) for x in buf])
+        return buf

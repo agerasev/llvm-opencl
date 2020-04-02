@@ -73,7 +73,7 @@ class CWriter : public FunctionPass, public InstVisitor<CWriter> {
   IDMap<StructType *> UnnamedStructIDs;
 
   std::set<Type *> TypedefDeclTypes;
-  std::set<Type *> SelectDeclTypes;
+  std::set<std::pair<Type *, Type *>> SelectDeclTypes;
   std::set<std::pair<CmpInst::Predicate, Type *>> CmpDeclTypes;
   std::set<std::pair<CastInst::CastOps, std::pair<Type *, Type *>>>
       CastOpDeclTypes;

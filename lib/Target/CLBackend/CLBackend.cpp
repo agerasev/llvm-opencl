@@ -1106,10 +1106,18 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
     Out << (Context == ContextStatic ? " }" : ")");
     break;
   }
+  case Type::PointerTyID: {
+    if (isa<ConstantPointerNull>(CPV)) {
+      Out << "(";
+      printTypeName(Out, CPV->getType());
+      Out << ")0";
+    } else {
+      errorWithMessage("Non-null pointer constant is not supported");
+    }
+    break;
+  }
   default:
-    errs() << "This constant type is not supported: ";
-    errs() << CPV->getType();
-    errs() << "\n";
+    errs() << "This constant type is not supported: " << *CPV << "\n";
     errorWithMessage("This constant type is not supported");
   }
 }
@@ -1599,38 +1607,36 @@ void CWriter::generateHeader(Module &M) {
   Out << "\n\n/* LLVM Intrinsic Builtin Function Bodies */\n";
 
   // Loop over all select operations
-  for (std::set<Type *>::iterator it = SelectDeclTypes.begin(),
+  for (std::set<std::pair<Type *, Type *>>::iterator it = SelectDeclTypes.begin(),
                                   end = SelectDeclTypes.end();
        it != end; ++it) {
     // static Rty llvm_select_u8x4(<bool x 4> condition, <u8 x 4>
     // iftrue, <u8 x 4> ifnot) {
     //   return convert_<u8 x 4>(condition) ? iftrue : ifnot;
     // }
+    Type *CTy = it->first;
+    Type *Ty = it->second;
     Out << "static ";
-    printTypeName(Out, *it, false);
+    printTypeName(Out, Ty, false);
     Out << " llvm_select_";
-    printTypeString(Out, *it);
+    printTypeString(Out, CTy);
+    Out << "_";
+    printTypeString(Out, Ty);
     Out << "(";
-    if (isa<VectorType>(*it))
-      printTypeName(
-          Out,
-          VectorType::get(Type::getInt1Ty((*it)->getContext()),
-                          (*it)->getVectorNumElements()),
-          false);
-    else
-      //Out << "bool";
-      Out << "uchar";
+    printTypeName(Out, CTy);
     Out << " condition, ";
-    printTypeName(Out, *it, false);
+    printTypeName(Out, Ty, false);
     Out << " iftrue, ";
-    printTypeName(Out, *it, false);
+    printTypeName(Out, Ty, false);
     Out << " ifnot) {\n  ";
-    VectorType *VTy = dyn_cast<VectorType>(*it);
+
+
+    Out << "  return ";
+    VectorType *VTy = dyn_cast<VectorType>(CTy);
     if (VTy) {
-      Type *ElTy = VTy->getElementType();
-      // TODO_: Replace select with `?:` in order to allow
-      // frontend to make some optimizations
-      Out << "  return select(ifnot, iftrue, convert_";
+      cwriter_assert(isa<VectorType>(Ty))
+      Type *ElTy = Ty->getVectorElementType();
+      Out << "convert_";
       switch (ElTy->getTypeID()) {
       case Type::IntegerTyID:
         printTypeName(Out, ElTy, true);
@@ -1648,12 +1654,12 @@ void CWriter::generateHeader(Module &M) {
         errorWithMessage("Unknown vector element type");
       }
       Out << VTy->getNumElements() << "(";
-      Out << "convert_char" << VTy->getNumElements() << "(";
-      Out << "condition";
-      Out << ")));\n";
+      printWithCast(Out, CTy, true, "condition");
+      Out << ")";
     } else {
-      Out << "  return condition ? iftrue : ifnot;\n";
+      Out << "condition";
     }
+    Out << " ? iftrue : ifnot;\n";
     Out << "}\n";
   }
 
@@ -2633,7 +2639,13 @@ void CWriter::visitCastInst(CastInst &I) {
 void CWriter::visitSelectInst(SelectInst &I) {
   CurInstr = &I;
 
+  cwriter_assert(
+      !I.getCondition()->getType()->isVectorTy() ||
+      I.getType()->isVectorTy());
+
   Out << "llvm_select_";
+  printTypeString(Out, I.getCondition()->getType());
+  Out << "_";
   printTypeString(Out, I.getType());
   Out << "(";
   writeOperand(I.getCondition());
@@ -2642,10 +2654,10 @@ void CWriter::visitSelectInst(SelectInst &I) {
   Out << ", ";
   writeOperand(I.getFalseValue());
   Out << ")";
-  SelectDeclTypes.insert(I.getType());
-  cwriter_assert(
-      I.getCondition()->getType()->isVectorTy() ==
-      I.getType()->isVectorTy()); // TODO: might be scalarty == vectorty
+  SelectDeclTypes.insert(std::make_pair(
+    I.getCondition()->getType(),
+    I.getType()
+  ));
 }
 
 void CWriter::printIntrinsicDefinition(FunctionType *funT, unsigned Opcode,

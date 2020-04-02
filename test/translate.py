@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 from os.path import split, join
-from shutil import copyfile
 from subprocess import run, SubprocessError
 
 class FrontendError(Exception):
@@ -24,6 +23,9 @@ def check_rustc():
     else:
         return True
 
+target = "spir-unknown-unknown"
+data_layout = "e-p:32:32-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024"
+
 def frontend(src, ir, opt=3, ty=None, std=None):
     try:
         if (ty and ty.startwith("cl")) or (not ty and src.endswith(".cl")):
@@ -36,7 +38,7 @@ def frontend(src, ir, opt=3, ty=None, std=None):
                 std = "cl1.2"
             run([
                 "clang", "-x", "cl", "-S", "-emit-llvm",
-                "--target=spir-unknown-unknown",
+                "--target={}".format(target),
                 "-std={}".format(std),
                 "-Xclang", "-finclude-default-header",
                 "-O{}".format(opt),
@@ -50,7 +52,7 @@ def frontend(src, ir, opt=3, ty=None, std=None):
             # Plain C/C++ source file
             args = [
                 "clang", "-S", "-emit-llvm",
-                "--target=spir-unknown-unknown",
+                "--target={}".format(target),
             ]
             if std:
                 args.append("-std={}".format(std))
@@ -60,6 +62,7 @@ def frontend(src, ir, opt=3, ty=None, std=None):
 
         elif (ty and ty == "rs") or (not ty and src.endswith(".rs")):
             # Rust library, you need to have `rustc` installed
+            rsir = ".rs.".join(ir.rsplit(".", 1))
             args = [
                 "rustc", "--emit=llvm-ir",
                 # Use `wasm32` because rustc cannot compile to `spir`
@@ -68,10 +71,25 @@ def frontend(src, ir, opt=3, ty=None, std=None):
             ]
             if opt >= 2:
                 args.append("-O")
-            args.extend([src, "-o", ir])
+            args.extend([src, "-o", rsir])
             run(args, check=True)
+
+            # Translate `wasm32` to `spir` target
+            run([
+                "opt", "-S",
+                "--mtriple={}".format(target),
+                "--data-layout={}".format(data_layout),
+                "-O{}".format(opt),
+                rsir, "-o", ir,
+            ], check=True)
+
         elif (ty and ty == "spir") or (not ty and src.endswith(".ll")):
-            copyfile(src, ir)
+            # Already LLVM IR, apply optimization
+            run([
+                "opt", "-S",
+                "-O{}".format(opt),
+                src, "-o", ir,
+            ], check=True)
         else:
             if ty:
                 raise Exception("Unknown source type: {}".format(ty))

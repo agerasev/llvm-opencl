@@ -58,7 +58,7 @@ class Runner(Walker):
         module = importlib.import_module(self.modname)
         
         try:
-            if module.skip:
+            if module.skip and not self.patterns:
                 self.report.skip(self.modname)
                 return
         except AttributeError:

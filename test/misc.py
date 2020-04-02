@@ -14,7 +14,7 @@ def remove_content(location, names=[], extensions=[]):
 
 
 def distribute_patterns(names, patterns):
-    if not patterns:
+    if not patterns or [] in patterns:
         return [(n, []) for n in names]
 
     for p in patterns:
@@ -26,9 +26,6 @@ def distribute_patterns(names, patterns):
         ps = [p[1:] for p in patterns if p[0] in n]
 
         if len(ps) > 0:
-            if [] in ps:
-                ps = []
-            
             matches.append((n, ps))
 
     return matches
