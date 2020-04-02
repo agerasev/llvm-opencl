@@ -24,6 +24,7 @@
 #include "llvm/Support/Host.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/TargetRegistry.h"
+#include "llvm/Support/Signals.h"
 
 #include "TopologicalSorter.h"
 #include "StringTools.h"
@@ -34,19 +35,6 @@
 #include <iostream>
 #include <sstream>
 
-#undef NDEBUG
-
-// Jackson Korba 9/29/14
-#ifndef DEBUG_TYPE
-#define DEBUG_TYPE ""
-#endif
-// End Modification
-
-// Some ms header decided to define setjmp as _setjmp, undo this for this file
-// since we don't need it
-#ifdef setjmp
-#undef setjmp
-#endif
 
 namespace llvm_opencl {
 
@@ -66,16 +54,11 @@ enum UnaryOps {
   BinaryNot,
 };
 
-#ifdef NDEBUG
-#define cwriter_assert(expr)                                                   \
-  do {                                                                         \
-  } while (0)
-#else
+
 #define cwriter_assert(expr)                                                   \
   if (!(expr)) {                                                               \
     this->errorWithMessage(#expr);                                             \
   }
-#endif
 
 static bool isEmptyType(Type *Ty) {
   if (StructType *STy = dyn_cast<StructType>(Ty))
@@ -207,9 +190,7 @@ raw_ostream &CWriter::printTypeString(raw_ostream &Out, Type *Ty) {
   }
 
   default:
-#ifndef NDEBUG
     errs() << "Unknown primitive type: " << *Ty << "\n";
-#endif
     errorWithMessage("unknown primitive type");
   }
 }
@@ -249,9 +230,7 @@ std::string CWriter::getVectorName(VectorType *VT, bool Aligned, bool isSigned) 
 
   uint64_t n = VT->getNumElements();
   if (n != 2 && n != 3 && n != 4 && n != 8 && n != 16) {
-#ifndef NDEBUG
     errs() << "Vector of length " << n << " not supported\n";
-#endif
     errorWithMessage("Unsupported vector length");
   }
 
@@ -260,16 +239,14 @@ std::string CWriter::getVectorName(VectorType *VT, bool Aligned, bool isSigned) 
   if (t != "char" && t != "uchar" && t != "short" && t != "ushort" &&
       t != "int" && t != "uint" && t != "long" && t != "ulong" &&
       t != "float" && t != "double") {
-#ifndef NDEBUG
     errs() << "Vector of type " << t << " not supported\n";
-#endif
     errorWithMessage("Unsupported vector type");
   }
   
   return t + utostr(n);
 }
 
-static const std::string getCmpPredicateName(CmpInst::Predicate P) {
+std::string CWriter::getCmpPredicateName(CmpInst::Predicate P) const {
   switch (P) {
   case FCmpInst::FCMP_FALSE:
     return "0";
@@ -324,18 +301,15 @@ static const std::string getCmpPredicateName(CmpInst::Predicate P) {
   case ICmpInst::ICMP_SGT:
     return "sgt";
   default:
-#ifndef NDEBUG
-    errs() << "Invalid icmp predicate!" << P << "\n";
-#endif
-    // TODO: cwriter_assert
-    llvm_unreachable(0);
+    errs() << "Invalid icmp predicate: " << P << "\n";
+    errorWithMessage("Invalid icmp predicate");
   }
 }
 
-static std::string getCmpImplem(
+std::string CWriter::getCmpImplem(
   CmpInst::Predicate P,
   const std::string &l, const std::string &r
-) {
+) const {
   switch (P) {
   case FCmpInst::FCMP_FALSE:
     return "0";
@@ -381,11 +355,8 @@ static std::string getCmpImplem(
     return "1";
 
   default:
-#ifndef NDEBUG
-    errs() << "Invalid fcmp predicate!" << P << "\n";
-#endif
-    // TODO: cwriter_assert
-    llvm_unreachable(0);
+    errs() << "Invalid fcmp predicate: " << P << "\n";
+    errorWithMessage("Invalid fcmp predicate!");
   }
 }
 
@@ -419,9 +390,7 @@ raw_ostream &CWriter::printSimpleType(raw_ostream &Out, Type *Ty,
     return Out << "double";
 
   default:
-#ifndef NDEBUG
     errs() << "Unknown primitive type: " << *Ty;
-#endif
     errorWithMessage("unknown primitive type");
   }
 }
@@ -597,9 +566,7 @@ CWriter::printTypeName(raw_ostream &Out, Type *Ty, bool isSigned,
         Out << ""; // OpenCL 2.x generic address space
         break;
       default:
-#ifndef NDEBUG
       errs() << "Invalid address space " << Ty->getPointerAddressSpace() << "\n";
-#endif
       errorWithMessage("Encountered Invalid Address Space");
       break;
     }
@@ -618,9 +585,7 @@ CWriter::printTypeName(raw_ostream &Out, Type *Ty, bool isSigned,
   }
 
   default:
-#ifndef NDEBUG
     errs() << "Unexpected type: " << *Ty << "\n";
-#endif
     errorWithMessage("unexpected type");
   }
 }
@@ -688,9 +653,7 @@ CWriter::printFunctionProto(raw_ostream &Out, FunctionType *FTy,
     Out << " __kernel";
     break;
   default:
-#ifndef NDEBUG
     errs() << "Unhandled calling convention " << Attrs.second << "\n";
-#endif
     errorWithMessage("Encountered Unhandled Calling Convention");
     break;
   }
@@ -862,9 +825,7 @@ raw_ostream &CWriter::printVectorComponent(raw_ostream &Out, uint64_t i) {
   if (i < 16) {
     Out << "s" << comps[i];
   } else {
-#ifndef NDEBUG
     errs() << "Vector component index is "  << i << " but it cannot be greater than 15\n";
-#endif
     errorWithMessage("Vector component error");
   }
   return Out;
@@ -876,9 +837,7 @@ raw_ostream &CWriter::printVectorShuffled(
   static const char comps[17] = "0123456789ABCDEF";
   size_t s = mask.size();
   if (s != 2 && s != 3 && s != 4 && s != 8 && s != 16) {
-#ifndef NDEBUG
     errs() << "Shuffled vector size is "  << s << " but it can only be 2, 3, 4, 8 or 16\n";
-#endif
     errorWithMessage("Shuffled vector size error");
   }
   Out << "s";
@@ -886,9 +845,7 @@ raw_ostream &CWriter::printVectorShuffled(
     if (i < 16) {
       Out << comps[i];
     } else {
-  #ifndef NDEBUG
       errs() << "Vector component index is "  << i << " but it cannot be greater than 15\n";
-  #endif
       errorWithMessage("Vector component error");
     }
   }
@@ -1149,9 +1106,9 @@ void CWriter::printConstant(Constant *CPV, enum OperandContext Context) {
     break;
   }
   default:
-#ifndef NDEBUG
-    errs() << "This constant type is not supported: " << *CPV << "\n";
-#endif
+    errs() << "This constant type is not supported: ";
+    errs() << CPV->getType();
+    errs() << "\n";
     errorWithMessage("This constant type is not supported");
   }
 }
@@ -1165,11 +1122,9 @@ void CWriter::printConstantWithCast(Constant *CPV, unsigned Opcode) {
   Type *OpTy = CPV->getType();
   // TODO: VectorType are valid here, but not supported
   if (!OpTy->isIntegerTy() && !OpTy->isFloatingPointTy()) {
-#ifndef NDEBUG
     errs() << "Unsupported 'constant with cast' type " << *OpTy
            << " in: " << *CPV << "\n"
            << "\n";
-#endif
     errorWithMessage("Unsupported 'constant with cast' type");
   }
 
@@ -1686,11 +1641,9 @@ void CWriter::generateHeader(Module &M) {
         Out << "long";
         break;
       default:
-#ifndef NDEBUG
         errs() << "Unknown vector element type: ";
         printTypeName(errs(), ElTy, true);
         errs() << "\n";
-#endif
         errorWithMessage("Unknown vector element type");
       }
       Out << VTy->getNumElements() << "(";
@@ -1965,9 +1918,7 @@ void CWriter::generateHeader(Module &M) {
             Out << ">>";
             break;
           default:
-#ifndef NDEBUG
             errs() << "Invalid operator type!" << opcode << "\n";
-#endif
             errorWithMessage("invalid operator type");
           }
           Out << " ";
@@ -2587,6 +2538,8 @@ void CWriter::visitPHINode(PHINode &I) {
 void CWriter::visitBinaryOperator(BinaryOperator &I) {
   using namespace PatternMatch;
 
+  CurInstr = &I;
+
   // binary instructions, shift instructions, setCond instructions.
   cwriter_assert(!I.getType()->isPointerTy());
 
@@ -2735,9 +2688,7 @@ void CWriter::printIntrinsicDefinition(FunctionType *funT, unsigned Opcode,
     Out << "  return fma(a, b, c);";
     break;
   default:
-#ifndef NDEBUG
-    errs() << "Unsupported Intrinsic!" << Opcode << "\n";
-#endif
+    errs() << "Unsupported Intrinsic: " << Opcode << "\n";
     errorWithMessage("unsupported instrinsic");
   }
 
@@ -2822,7 +2773,7 @@ void CWriter::visitCallInst(CallInst &I) {
   // If this is a call to a struct-return function, assign to the first
   // parameter instead of passing it to the call.
   const AttributeList &PAL = I.getAttributes();
-  bool hasByVal = I.hasByValArgument();
+  //bool hasByVal = I.hasByValArgument();
   bool isStructRet = I.hasStructRetAttr();
   if (isStructRet) {
     writeOperandDeref(I.getArgOperand(0));
@@ -2886,9 +2837,7 @@ bool CWriter::visitBuiltinCall(CallInst &I, Intrinsic::ID ID) {
   case Intrinsic::fmuladd:
     return false; // these use the normal function call emission
   default:
-#ifndef NDEBUG
-    errs() << "Unsupported LLVM intrinsic! " << I << "\n";
-#endif
+    errs() << "Unsupported LLVM intrinsic: " << I << "\n";
     errorWithMessage("Unsupported llvm instrinsic");
     return false;
   }
@@ -3017,9 +2966,7 @@ void CWriter::visitInsertElementInst(InsertElementInst &I) {
   std::stringstream ss(index_str);
   ss >> index;
   if (!ss.good()) {
-#ifndef NDEBUG
-      errs() << "Cannot parse '" << index_str << "' as integer\n";
-#endif
+    errs() << "Cannot parse '" << index_str << "' as integer\n";
     errorWithMessage("Cannot access vector element by dynamic index");
   }
   printVectorComponent(Out, index);
@@ -3047,9 +2994,7 @@ void CWriter::visitExtractElementInst(ExtractElementInst &I) {
     std::stringstream ss(index_str);
     ss >> index;
     if (!ss.good()) {
-  #ifndef NDEBUG
-        errs() << "Cannot parse '" << index_str << "' as integer\n";
-  #endif
+      errs() << "Cannot parse '" << index_str << "' as integer\n";
       errorWithMessage("Cannot access vector element by dynamic index");
     }
     printVectorComponent(Out, index);
@@ -3158,19 +3103,20 @@ void CWriter::visitExtractValueInst(ExtractValueInst &EVI) {
   Out << ")";
 }
 
-LLVM_ATTRIBUTE_NORETURN void CWriter::errorWithMessage(const char *message) {
-#ifndef NDEBUG
+LLVM_ATTRIBUTE_NORETURN void CWriter::errorWithMessage(const char *message) const {
   errs() << message;
-  errs() << " in: ";
+  errs() << " in:\n";
   if (CurInstr != nullptr) {
-    errs() << *CurInstr << " @ ";
+    errs() << *CurInstr << "\nat ";
     CurInstr->getDebugLoc().print(errs());
   } else {
     errs() << "<unknown instruction>";
   }
-  errs() << "\n";
-#endif
+  errs() << "\n\n";
 
+  sys::PrintStackTrace(errs());
+  
+  exit(1);
   llvm_unreachable(message);
 }
 

@@ -21,5 +21,5 @@ add_llvm_target(CLBackendCodeGen
   StringTools.cpp
   )
 
-#set_source_files_properties(CLBackend.cpp PROPERTIES COMPILE_FLAGS -g)
-#set_source_files_properties(CLBuiltIns.cpp PROPERTIES COMPILE_FLAGS -g)
+set_source_files_properties(CLBackend.cpp PROPERTIES COMPILE_FLAGS -g)
+set_source_files_properties(CLBuiltIns.cpp PROPERTIES COMPILE_FLAGS -g)

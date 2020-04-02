@@ -162,6 +162,12 @@ private:
   std::string getArrayName(ArrayType *AT);
   std::string getVectorName(VectorType *VT, bool Aligned, bool isSigned=false);
 
+  std::string getCmpPredicateName(CmpInst::Predicate P) const;
+  std::string getCmpImplem(
+    CmpInst::Predicate P,
+    const std::string &l, const std::string &r
+  ) const;
+
   raw_ostream &printVectorComponent(raw_ostream &Out, uint64_t i);
   raw_ostream &printVectorShuffled(raw_ostream &Out, const std::vector<uint64_t> &mask);
 
@@ -223,7 +229,6 @@ private:
   void visitReturnInst(ReturnInst &I);
   void visitBranchInst(BranchInst &I);
   void visitSwitchInst(SwitchInst &I);
-  void visitIndirectBrInst(IndirectBrInst &I);
   void visitInvokeInst(InvokeInst &I) {
     llvm_unreachable("Lowerinvoke pass didn't work!");
   }
@@ -259,7 +264,7 @@ private:
 
   void outputLValue(Instruction *I) { Out << "  " << GetValueName(I) << " = "; }
 
-  LLVM_ATTRIBUTE_NORETURN void errorWithMessage(const char *message);
+  LLVM_ATTRIBUTE_NORETURN void errorWithMessage(const char *message) const;
 
   bool isGotoCodeNecessary(BasicBlock *From, BasicBlock *To);
   void printPHICopiesForSuccessor(BasicBlock *CurBlock, BasicBlock *Successor,
