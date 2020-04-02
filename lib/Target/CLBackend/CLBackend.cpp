@@ -3034,7 +3034,17 @@ void CWriter::visitShuffleVectorInst(ShuffleVectorInst &SVI) {
       // In C++, the value false is converted to zero and the value true is
       // converted to one
       Value *Op = SVI.getOperand((unsigned)SrcVal >= NumInputElts);
-      if (isa<Instruction>(Op)) {
+      if (isa<Constant>(Op)) {
+        if (isa<ConstantAggregateZero>(Op) || isa<UndefValue>(Op)) {
+          printConstant(Zero);
+        } else if (isa<ConstantVector>(Op)) {
+          printConstant(
+              cast<ConstantVector>(Op)->getOperand(SrcVal & (NumElts - 1)),
+              ContextNormal);
+        } else {
+          errorWithMessage("Unknown constant value");
+        }
+      } else if (isa<Argument>(Op) || isa<Instruction>(Op)) {
         // Do an extractelement of this value from the appropriate input.
         Out << "(";
         writeOperand(Op);
@@ -3042,12 +3052,8 @@ void CWriter::visitShuffleVectorInst(ShuffleVectorInst &SVI) {
         printVectorComponent(Out,
           ((unsigned)SrcVal >= NumInputElts ? SrcVal - NumInputElts : SrcVal)
         );
-      } else if (isa<ConstantAggregateZero>(Op) || isa<UndefValue>(Op)) {
-        printConstant(Zero);
       } else {
-        printConstant(
-            cast<ConstantVector>(Op)->getOperand(SrcVal & (NumElts - 1)),
-            ContextNormal);
+        errorWithMessage("Unknown value");
       }
     }
   }
