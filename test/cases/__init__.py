@@ -22,9 +22,11 @@ class Cleaner(Walker):
             if os.path.split(d)[1] in ["__pycache__"]:
                 shutil.rmtree(d)
             else:
-                children.append(Cleaner(d))
+                Cleaner(d).walk()
 
-        return children
+        if not os.listdir(self.loc):
+            shutil.rmtree(self.loc)
+            
 
 def clean():
     Cleaner(os.path.split(__file__)[0]).walk()
@@ -53,8 +55,6 @@ class Runner(Walker):
         return children
     
     def process(self, files, dirs):
-        children = self.fork(dirs)
-
         module = importlib.import_module(self.modname)
         
         try:
@@ -64,8 +64,11 @@ class Runner(Walker):
         except AttributeError:
             pass
 
+        children = self.fork(dirs)
         if len(children) > 0:
-            return children
+            for child in children:
+                child.walk()
+            return
         
         try:
             Tester = module.Tester

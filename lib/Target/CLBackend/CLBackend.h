@@ -36,6 +36,7 @@
 
 #include "IDMap.h"
 #include "CLBuiltIns.h"
+#include "CLIntrinsics.h"
 
 namespace llvm_opencl {
 
@@ -91,6 +92,7 @@ class CWriter : public FunctionPass, public InstVisitor<CWriter> {
   unsigned LastAnnotatedSourceLine = 0;
 
   CLBuiltIns builtins;
+  CLIntrinsicMap intrinsics;
 
 public:
   static char ID;

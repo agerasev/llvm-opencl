@@ -1517,15 +1517,10 @@ void CWriter::generateHeader(Module &M) {
     // Don't print declarations for intrinsic functions.
     // Store the used intrinsics, which need to be explicitly defined.
     if (I->isIntrinsic()) {
-      switch (I->getIntrinsicID()) {
-      case Intrinsic::memset:
-      case Intrinsic::memcpy:
-      case Intrinsic::fmuladd:
+      if (intrinsics.get(I->getIntrinsicID()) != nullptr) {
         intrinsicsToDefine.push_back(&*I);
-        continue;
-      default:
-        continue;
       }
+      continue;
     }
 
     // Skip OpenCL built-in functions
@@ -2662,50 +2657,18 @@ void CWriter::visitSelectInst(SelectInst &I) {
 
 void CWriter::printIntrinsicDefinition(FunctionType *funT, unsigned Opcode,
                                        std::string OpName, raw_ostream &Out) {
-  Type *retT = funT->getReturnType();
-  int numParams = funT->getNumParams();
-
-  cwriter_assert(numParams > 0 && numParams < 26);
-
-  // static Rty _llvm_op_ixx(unsigned ixx a, unsigned ixx b) {
-  //   Rty r;
-  //   <opcode here>
-  //   return r;
-  // }
-  Out << "static ";
-  printTypeName(Out, retT);
-  Out << " ";
-  Out << OpName;
-  Out << "(";
-  for (int i = 0; i < numParams; i++) {
-    printTypeName(Out, funT->getParamType(i));
-    Out << " " << (char)('a' + i);
-    if (i != numParams - 1)
-      Out << ", ";
-  }
-  Out << ") {\n";
-
-  switch (Opcode) {
-  case Intrinsic::memset:
-    Out << "  for (uint i = 0; i < c; ++i) {\n"
-        << "    a[i] = b;\n"
-        << "  }\n";
-    break;
-  case Intrinsic::memcpy:
-    Out << "  for (uint i = 0; i < c; ++i) {\n"
-        << "    a[i] = b[i];\n"
-        << "  }\n";
-    break;
-  // TODO_: Use list of directly implemented intrinsics
-  case Intrinsic::fmuladd:
-    Out << "  return fma(a, b, c);\n";
-    break;
-  default:
+  const CLIntrinsic *intr = intrinsics.get(Opcode);
+  if (intr) {
+    intr->printDefinition(
+      Out, funT, OpName,
+      [this](raw_ostream &Out, Type *Ty, bool isSigned) {
+        printTypeName(Out, Ty, isSigned);
+      }
+    );
+  } else {
     errs() << "Unsupported Intrinsic: " << Opcode << "\n";
     errorWithMessage("unsupported instrinsic");
   }
-
-  Out << "}\n";
 }
 
 void CWriter::printIntrinsicDefinition(Function &F, raw_ostream &Out) {
@@ -2724,17 +2687,7 @@ bool CWriter::lowerIntrinsics(Function &F) {
     for (BasicBlock::iterator I = BB.begin(), E = BB.end(); I != E;) {
       if (CallInst *CI = dyn_cast<CallInst>(I++)) {
         if (Function *F = CI->getCalledFunction()) {
-          switch (F->getIntrinsicID()) {
-          case Intrinsic::not_intrinsic:
-          case Intrinsic::dbg_value:
-          case Intrinsic::dbg_declare:
-          case Intrinsic::memset:
-          case Intrinsic::memcpy:
-          case Intrinsic::fmuladd:
-            // We directly implement these intrinsics
-            break;
-
-          default:
+          if (!intrinsics.hasImpl(F->getIntrinsicID())) {
             // All other intrinsic calls we must lower.
             LoweredAny = true;
 
@@ -2757,8 +2710,6 @@ bool CWriter::lowerIntrinsics(Function &F) {
               if (Function *NewF = Call->getCalledFunction())
                 if (!NewF->isDeclaration())
                   prototypesToGen.push_back(NewF);
-
-            break;
           }
         }
       }
@@ -2841,15 +2792,9 @@ void CWriter::visitCallInst(CallInst &I) {
 bool CWriter::visitBuiltinCall(CallInst &I, Intrinsic::ID ID) {
   CurInstr = &I;
 
-  switch (ID) {
-  case Intrinsic::dbg_value:
-  case Intrinsic::dbg_declare:
-    return true; // ignore these intrinsics
-  case Intrinsic::memset:
-  case Intrinsic::memcpy:
-  case Intrinsic::fmuladd:
-    return false; // these use the normal function call emission
-  default:
+  if (intrinsics.hasImpl(ID)) {
+    return intrinsics.get(ID) == nullptr;
+  } else {
     errs() << "Unsupported LLVM intrinsic: " << I << "\n";
     errorWithMessage("Unsupported llvm instrinsic");
     return false;
