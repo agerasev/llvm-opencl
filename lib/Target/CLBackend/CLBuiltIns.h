@@ -2,6 +2,7 @@
 #define CLBUILTINS_H
 
 #include <string>
+#include <map>
 #include <set>
 #include <initializer_list>
 #include <functional>
@@ -29,17 +30,24 @@ namespace llvm_opencl {
 
   class CLBuiltIns {
   private:
-    std::set<Func> set;
-    int add_functions(const std::initializer_list<Func> &list);
+    std::map<std::string, std::string> commons;
+    std::set<Func> wrappers;
+    
+    bool add_common(const std::string &name, const std::string &body);
+    bool add_wrapper(const Func &func);
+    int add_wrappers(const std::initializer_list<Func> &list);
+
+    static int demangle(const char *name, Func *func);
+    int find_common(const char *name) const;
+    int find_wrapper(Func &func) const;
   public:
     CLBuiltIns();
-    static int demangle(const char *mangled_name, Func *demangled);
-    int find(Func &func) const;
-    int findMangled(const char *mangled_name, Func *demangled);
-    std::string getDef(
+    int find(const char *name, Func *func);
+    bool printDefinition(
+      raw_ostream &Out,
       const Func &func,
       Function *F,
-      std::function<std::string(Value *)> GetValueName,
+      std::function<std::string(int)> GetValueName,
       std::function<std::string(Type *)> GetTypeName
     ) const;
   };

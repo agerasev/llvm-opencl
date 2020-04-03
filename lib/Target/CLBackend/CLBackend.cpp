@@ -624,10 +624,36 @@ raw_ostream &CWriter::printFunctionDeclaration(
 }
 
 raw_ostream &
+CWriter::printFunctionProto(raw_ostream &Out, FunctionType *Ty,
+                     std::pair<AttributeList, CallingConv::ID> Attrs,
+                     const std::string &Name,
+                     iterator_range<Function::arg_iterator> *ArgList) {
+  // Cache
+  int Idx = 0;
+  Function::arg_iterator ArgName = Function::arg_iterator();
+  if (ArgList) {
+    ArgName = ArgList->begin();
+  }
+  return printFunctionProto(Out, Ty, Attrs, Name, ArgList, [&](int i) {
+    if (ArgList) {
+      if (i < Idx) {
+        Idx = 0;
+        ArgName = ArgList->begin();
+      }
+      for (; Idx < i; ++Idx) {
+        ++ArgName;
+      }
+    }
+    return GetValueName(ArgName);
+  });
+}
+
+raw_ostream &
 CWriter::printFunctionProto(raw_ostream &Out, FunctionType *FTy,
                             std::pair<AttributeList, CallingConv::ID> Attrs,
                             const std::string &Name,
-                            iterator_range<Function::arg_iterator> *ArgList) {
+                            iterator_range<Function::arg_iterator> *ArgList,
+                            std::function<std::string(int)> GetArgName) {
   AttributeList &PAL = Attrs.first;
 
   // Should this function actually return a struct by-value?
@@ -660,17 +686,13 @@ CWriter::printFunctionProto(raw_ostream &Out, FunctionType *FTy,
   unsigned Idx = 1;
   bool PrintedArg = false;
   FunctionType::param_iterator I = FTy->param_begin(), E = FTy->param_end();
-  Function::arg_iterator ArgName = ArgList ? ArgList->begin() : Function::arg_iterator();
 
   // If this is a struct-return function, don't print the hidden
   // struct-return argument.
   if (isStructReturn) {
     cwriter_assert(I != E && "Invalid struct return function!");
-    //GetValueName(ArgName); // Reserve value name
     ++I;
     ++Idx;
-    if (ArgList)
-      ++ArgName;
   }
 
   for (; I != E; ++I) {
@@ -684,14 +706,13 @@ CWriter::printFunctionProto(raw_ostream &Out, FunctionType *FTy,
       Out << ", ";
     printTypeName(Out, ArgTy);
     PrintedArg = true;
-    ++Idx;
     if (ArgList) {
-      Out << ' ' << GetValueName(ArgName);
+      Out << ' ' << GetArgName(Idx - 1);
       if (isByVal) {
         Out << "_val";
       }
-      ++ArgName;
     }
+    ++Idx;
   }
 
   if (FTy->isVarArg()) {
@@ -1169,13 +1190,13 @@ std::string CWriter::GetValueName(Value *Operand) {
 
   // Mangle globals with the standard mangler interface for LLC compatibility.
   if (isa<GlobalValue>(Operand)) {
-    switch (builtins.findMangled(Name.data(), nullptr)) {
+    switch (builtins.find(Name.data(), nullptr)) {
     case -1:
       errorWithMessage("Built-in check unexpected error");
     case 0:
       return CBEMangle(Name);
     case 1:
-      return "ocl" + CBEMangle(Name);
+      return "builtin_" + CBEMangle(Name);
     }
   }
 
@@ -1524,31 +1545,35 @@ void CWriter::generateHeader(Module &M) {
     }
 
     // Skip OpenCL built-in functions
-    Func demangled;
-    switch (builtins.findMangled(I->getName().data(), &demangled)) {
+    Func func;
+    switch (builtins.find(I->getName().data(), &func)) {
     case -1:
       errorWithMessage("Built-in check unexpected error");
       break;
     case 1: {
       // Is opencl built-in
-      Out << "// " << demangled.to_string() << "\n";
+      // TODO_: Handle more than 26 arguments
+      auto GetArgName = [](int i) {
+        return std::string() + (char)('a' + i);
+      };
+      auto GetTypeName = [this](Type *Ty) {
+        std::string _out;
+        raw_string_ostream out(_out);
+        printTypeName(out, Ty, false);
+        out.str();
+        return _out;
+      };
+
+      Out << "// " << func.to_string() << "\n";
       Out << "static ";
+      
       iterator_range<Function::arg_iterator> args = I->args();
       printFunctionProto(Out, I->getFunctionType(),
                         std::make_pair(I->getAttributes(), I->getCallingConv()),
-                        GetValueName(&*I), &args);
-      Out << " {\n  " << builtins.getDef(
-        demangled,
-        &*I,
-        [this](Value *Operand) { return this->GetValueName(Operand); },
-        [this](Type *Ty) {
-          std::string _out;
-          raw_string_ostream out(_out);
-          printTypeName(out, Ty, false);
-          out.str();
-          return _out;
-        }
-      ) << ";\n}\n";
+                        GetValueName(&*I), &args, GetArgName);
+      Out << " {\n";
+      cwriter_assert(builtins.printDefinition(Out, func, &*I, GetArgName, GetTypeName));
+      Out << "}\n";
       break;
     }
     case 0:

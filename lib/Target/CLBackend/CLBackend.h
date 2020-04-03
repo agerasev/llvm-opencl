@@ -121,6 +121,12 @@ private:
   printFunctionProto(raw_ostream &Out, FunctionType *Ty,
                      std::pair<AttributeList, CallingConv::ID> Attrs,
                      const std::string &Name,
+                     iterator_range<Function::arg_iterator> *ArgList,
+                     std::function<std::string(int)> GetArgName);
+  raw_ostream &
+  printFunctionProto(raw_ostream &Out, FunctionType *Ty,
+                     std::pair<AttributeList, CallingConv::ID> Attrs,
+                     const std::string &Name,
                      iterator_range<Function::arg_iterator> *ArgList);
   raw_ostream &printFunctionProto(raw_ostream &Out, Function *F) {
     return printFunctionProto(

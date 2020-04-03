@@ -76,9 +76,7 @@ namespace llvm_opencl {
 
     ItaniumPartialDemangler dmg;
     if (dmg.partialDemangle(mangled_name)) {
-#ifndef NDEBUG
       //errs() << "Cannot demangle function '" << mangled_name << "'\n";
-#endif
       return 0;
     } else {
       size_t size = 0;
@@ -110,9 +108,18 @@ namespace llvm_opencl {
     return 1;
   }
 
-  int CLBuiltIns::find(Func &func) const {
-    auto it = set.find(func);
-    if (it != set.end()) {
+  int CLBuiltIns::find_common(const char *name) const {
+    auto it = commons.find(name);
+    if (it != commons.end()) {
+      return 1;
+    } else {
+      return 0;
+    }
+  }
+
+  int CLBuiltIns::find_wrapper(Func &func) const {
+    auto it = wrappers.find(func);
+    if (it != wrappers.end()) {
       func.ret = it->ret;
       return 1;
     } else {
@@ -120,60 +127,84 @@ namespace llvm_opencl {
     }
   }
 
-  int CLBuiltIns::findMangled(const char *mangled_name, Func *demangled) {
+  int CLBuiltIns::find(const char *name, Func *func) {
     Func local_func;
-    if (!demangled) {
-      demangled = &local_func;
+    if (!func) {
+      func = &local_func;
     }
-    switch (demangle(mangled_name, demangled)) {
+    switch (demangle(name, func)) {
       case 0:
-        return 0;
+        if (find_common(name)) {
+          func->name = name;
+          return 1;
+        } else {
+          return 0;
+        }
       case 1:
-        return find(*demangled);
+        //outs() << func->to_string() << "\n";
+        return find_wrapper(*func);
       case -1:
       default:
         return -1;
     }
   }
 
-  std::string CLBuiltIns::getDef(
+  bool CLBuiltIns::printDefinition(
+    raw_ostream &Out,
     const Func &func,
     Function *F,
-    std::function<std::string(Value *)> GetValueName,
+    std::function<std::string(int)> GetValueName,
     std::function<std::string(Type *)> GetTypeName
   ) const {
-    std::stringstream out;
+    auto cf = commons.find(func.name);
+    if (cf != commons.end()) {
+      // Common function
+      Out << cf->second;
+      return true;
+    }
 
-    out << "return ";
+    // OpenCL builtin
+    if (wrappers.find(func) == wrappers.end() || F->arg_size() != func.args.size()) {
+      return false;
+    }
+    Out << "  return ";
     Type *Ty = F->getReturnType();
     if (dyn_cast<VectorType>(Ty)) {
-      out << "convert_" << GetTypeName(Ty) << "(";
+      Out << "convert_" << GetTypeName(Ty) << "(";
     } else {
-      out << "(" << GetTypeName(Ty) << ")(";
+      Out << "(" << GetTypeName(Ty) << ")(";
     }
-    out << func.name << "(";
+    Out << func.name << "(";
     int i = 0;
     for (auto &a : F->args()) {
       if (i > 0) {
-        out << ", ";
+        Out << ", ";
       }
       if (dyn_cast<VectorType>(a.getType())) {
-        out << "convert_" << func.args[i];
+        Out << "convert_" << func.args[i];
       } else {
-        out << "(" << func.args[i] << ")";
+        Out << "(" << func.args[i] << ")";
       }
-      out << "(" << GetValueName(&a) << ")";
+      Out << "(" << GetValueName(i) << ")";
       i += 1;
     }
-    out << "))";
+    Out << "));\n";
 
-    return out.str();
+    return true;
   }
 
-  int CLBuiltIns::add_functions(const std::initializer_list<Func> &list) {
+  bool CLBuiltIns::add_common(const std::string &name, const std::string &body) {
+    return commons.insert(std::make_pair(name, body)).second;
+  }
+
+  bool CLBuiltIns::add_wrapper(const Func &func) {
+    return wrappers.insert(func).second;
+  }
+
+  int CLBuiltIns::add_wrappers(const std::initializer_list<Func> &list) {
     int n = 0;
     for (const Func &f : list) {
-      n += set.insert(f).second;
+      n += add_wrapper(f);
     }
     return n;
   }
@@ -249,6 +280,28 @@ namespace llvm_opencl {
   }
 
   CLBuiltIns::CLBuiltIns() {
+    // Common functions
+    add_common(
+      "memset",
+      "  for (uint i = 0; i < c; ++i) {\n"
+      "    a[i] = b;\n"
+      "  }\n"
+      "  return a;\n"
+    );
+    add_common(
+      "memcpy",
+      "  for (uint i = 0; i < c; ++i) {\n"
+      "    a[i] = b[i];\n"
+      "  }\n"
+      "  return a;\n"
+    );
+    add_common(
+      "mod",
+      // FIXME: Handle negative numbers
+      "  return a % b;\n"
+    );
+
+    // OpenCL built-ins wrappers
     std::vector<std::string> dim{"2", "3", "4", "8", "16"};
     std::vector<std::string> gendim = "" + dim;
     std::vector<std::string> typeis{"char", "short", "int", "long"};
@@ -256,10 +309,10 @@ namespace llvm_opencl {
     std::vector<std::string> typei = typeis + typeiu;
     std::vector<std::string> typef{"float", "double"};
     std::vector<std::string> type = typei + typef;
-    std::vector<std::string> addrspace{"__private", "__global", "__constant", "__local"};
+    std::vector<std::string> addrspace{" __private", " __global", " __constant", " __local", ""};
 
     // Work-Item Functions
-    add_functions({
+    add_wrappers({
       Func("uint", "get_work_dim", {}),
       Func("size_t", "get_global_size", { "uint" }),
       Func("size_t", "get_global_id", { "uint" }),
@@ -277,7 +330,7 @@ namespace llvm_opencl {
     for (std::string gd : gendim) {
       for (std::string tf : typef) {
         std::string gtf = tf + gd;
-        add_functions({
+        add_wrappers({
           Func(gtf, "acos", { gtf }),
           Func(gtf, "acosh", { gtf }),
           Func(gtf, "acospi", { gtf }),
@@ -356,7 +409,7 @@ namespace llvm_opencl {
     for (std::string gd : gendim) {
       for (std::string tis : typeis) {
         std::string tiu = "u"+tis;
-        add_functions({
+        add_wrappers({
           Func(tiu+gd, "abs", { tiu+gd }),
           Func(tiu+gd, "abs", { tis+gd }),
           Func(tiu+gd, "abs_diff", { tiu+gd, tiu+gd }),
@@ -364,7 +417,7 @@ namespace llvm_opencl {
         });
       }
       for (std::string ti : typei) {
-        add_functions({
+        add_wrappers({
           Func(ti+gd, "add_sat", { ti+gd, ti+gd }),
           Func(ti+gd, "hadd", { ti+gd, ti+gd }),
           Func(ti+gd, "rhadd", { ti+gd, ti+gd }),
@@ -387,7 +440,7 @@ namespace llvm_opencl {
         });
       }
       for (std::string s : {"", "u"}) {
-        add_functions({
+        add_wrappers({
           Func(s+"short"+gd, "upsample", { s+"char"+gd, "uchar"+gd }),
           Func(s+"int"+gd, "upsample", { s+"short"+gd, "ushort"+gd }),
           Func(s+"long"+gd, "upsample", { s+"int"+gd, "uint"+gd }),
@@ -398,7 +451,7 @@ namespace llvm_opencl {
     // Common Functions
     for (std::string gd : gendim) {
       for (std::string tf : typef) {
-        add_functions({
+        add_wrappers({
           Func(tf+gd, "clamp", { tf+gd, tf+gd, tf+gd }),
           Func(tf+gd, "clamp", { tf+gd, tf, tf }),
           Func(tf+gd, "degrees", { tf+gd }),
@@ -421,12 +474,12 @@ namespace llvm_opencl {
     // Geometric Functions
     for (std::string tf : typef) {
       for (std::string d : {"3", "4"}) {
-        add_functions({
+        add_wrappers({
           Func(tf+d, "cross", { tf+d, tf+d }),
         });
       }
       for (std::string d : dim) {
-        add_functions({
+        add_wrappers({
           Func(tf, "dot", { tf+d, tf+d }),
           Func(tf, "distance", { tf+d, tf+d }),
           Func(tf, "length", { tf+d }),
@@ -441,7 +494,7 @@ namespace llvm_opencl {
     // Relational Function
     for (std::string d : dim) {
       for (auto p : zip({"int", "long"}, {"float", "double"})) {
-        add_functions({
+        add_wrappers({
           Func(p.first+d, "isequal", { p.second+d, p.second+d }),
           Func(p.first+d, "isnotequal", { p.second+d, p.second+d }),
           Func(p.first+d, "isgreater", { p.second+d, p.second+d }),
@@ -460,7 +513,7 @@ namespace llvm_opencl {
       }
     }
     for (std::string tf : typef) {
-      add_functions({
+      add_wrappers({
         Func("int", "isequal", { tf, tf }),
         Func("int", "isnotequal", { tf, tf }),
         Func("int", "isgreater", { tf, tf }),
@@ -478,18 +531,18 @@ namespace llvm_opencl {
       });
     }
     for(std::string gtis : typeis*gendim) {
-      add_functions({
+      add_wrappers({
         Func("int", "any", { gtis }),
         Func("int", "all", { gtis }),
       });
     }
     for (std::string gd : gendim) {
       for (std::string t : type) {
-        add_functions({
+        add_wrappers({
           Func(t+gd, "bitselect", { t+gd, t+gd, t+gd }),
         });
         for (std::string ti : typei) {
-          add_functions({
+          add_wrappers({
             Func(t+gd, "select", { t+gd, t+gd, ti+gd }),
           });
         }
@@ -501,9 +554,9 @@ namespace llvm_opencl {
       for (std::string d : dim) {
         std::string vt = t + d;
         for (std::string as : addrspace) {
-          add_functions({
-            Func(vt, "vload"+d, {"uint", t+" const "+as+"*"}),
-            Func("void", "vstore"+d, {vt, "uint", t+" "+as+"*"}),
+          add_wrappers({
+            Func(vt, "vload"+d, {"uint", t+" const"+as+"*"}),
+            Func("void", "vstore"+d, {vt, "uint", t+as+"*"}),
           });
         }
       }
@@ -513,7 +566,7 @@ namespace llvm_opencl {
     for (std::string d : dim) {
       for (std::string sgt : type) {
         for (std::string dgt : type) {
-          add_functions({
+          add_wrappers({
             Func(dgt+d, "convert_"+dgt+d, { sgt+d }),
           });
           // TODO: `_sat`, {`_rte`, `_rtz`, `_rtp`, `_rtn`}
