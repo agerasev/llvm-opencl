@@ -112,6 +112,7 @@ namespace llvm_opencl {
       Out << "  return fma(a, b, c);\n";
     }
   };
+  
   class CountLeadingZeros : public IntrinsicGenerator {
   public:
     void printContent(raw_ostream &Out) override {
@@ -124,20 +125,51 @@ namespace llvm_opencl {
       Out << "  return ctz(a);\n";
     }
   };
-  /*
+
   class UAddWithOverflow : public IntrinsicGenerator {
   public:
     void printContent(raw_ostream &Out) override {
-      
+      Out << "  " << getTypeName(funT->getReturnType()) << " r;\n"
+          << "  r.f0 = a + b;\n"
+          << "  r.f1 = -(r.f0 < b);\n"
+          << "  return r;\n";
     }
   };
   class SAddWithOverflow : public IntrinsicGenerator {
   public:
     void printContent(raw_ostream &Out) override {
-      
+      Type *Ty = funT->getParamType(0);
+      std::string sty = getTypeName(Ty, true);
+
+      Out << "  " << getTypeName(funT->getReturnType()) << " r;\n"
+          << "  r.f0 = a + b;\n"
+          << "  r.f1 = -(((" << sty << ")a >= 0) == ((" << sty << ")b >= 0) && " << 
+             "((" + sty + ")r.f0 >= 0) != ((" << sty << ")a >= 0));\n"
+          << "  return r;\n";
     }
   };
-  */
+  class USubWithOverflow : public IntrinsicGenerator {
+  public:
+    void printContent(raw_ostream &Out) override {
+      Out << "  " << getTypeName(funT->getReturnType()) << " r;\n"
+          << "  r.f0 = a - b;\n"
+          << "  r.f1 = -(r.f0 > a);\n"
+          << "  return r;\n";
+    }
+  };
+  class SSubWithOverflow : public IntrinsicGenerator {
+  public:
+    void printContent(raw_ostream &Out) override {
+      Type *Ty = funT->getParamType(0);
+      std::string sty = getTypeName(Ty, true);
+
+      Out << "  " << getTypeName(funT->getReturnType()) << " r;\n"
+          << "  r.f0 = a - b;\n"
+          << "  r.f1 = -(((" << sty << ")a >= 0) != ((" << sty << ")b >= 0) && " <<
+             "((" + sty + ")r.f0 >= 0) != ((" << sty << ")a >= 0));\n"
+          << "  return r;\n";
+    }
+  };
   class UMulWithOverflow : public IntrinsicGenerator {
   public:
     void printContent(raw_ostream &Out) override {
@@ -169,22 +201,37 @@ namespace llvm_opencl {
   public:
     void printContent(raw_ostream &Out) override {
       Type *Ty = funT->getParamType(0);
-      std::string uty = getTypeName(Ty, false),
-                  sty = getTypeName(Ty, true);
+      std::string sty = getTypeName(Ty, true);
 
       Out << "  " << getTypeName(funT->getReturnType()) << " r;\n";
 
       Out << "  r.f0 = a*b;\n"
           << "  if (a != 0 && b != 0) {\n"
-          << "    r.f1 = -((" << sty << ")r.f0/(" << sty <<
-             ")b != (" << sty << ")a || (" << sty << ")r.f0/(" <<
-             sty << ")a != (" << sty << ")b);\n"
+          << "    r.f1 = -((" << sty << ")r.f0/(" << sty << ")b != (" << sty << ")a || " <<
+             "(" << sty << ")r.f0/(" << sty << ")a != (" << sty << ")b);\n"
           << "  } else {\n"
           << "    r.f0 = 0;\n"
           << "  }\n"
           << "  return r;\n";
     }
   };
+  /*
+  class SDivWithOverflow : public IntrinsicGenerator {
+  public:
+    void printContent(raw_ostream &Out) override {
+      Type *Ty = funT->getParamType(0);
+      int N = Ty->getIntegerBitWidth();
+      std::string uty = getTypeName(Ty, false),
+                  sty = getTypeName(Ty, true);
+      
+      Out << "  " << getTypeName(funT->getReturnType()) << " r;\n"
+          << "  r.f0 = (" << uty << ")((" << sty << ")a/(" << sty << ")b);\n"
+          << "  r.f1 = (a == ((" << uty << ")1 << " << (N - 1) << ") && " <<
+             "(b == ~(" << uty << ")0);\n"
+          << "  return r;\n"
+    }
+  };
+  */
 
   static std::pair<unsigned, std::unique_ptr<CLIntrinsic>> make_entry(unsigned Opcode, IntrinsicGenerator *gen) {
     return std::make_pair(Opcode, std::unique_ptr<CLIntrinsic>(new IntrinsicGeneratorWraper(gen)));
@@ -197,11 +244,16 @@ namespace llvm_opencl {
   CLIntrinsicMap::CLIntrinsicMap() {
     insert(make_entry(Intrinsic::memset, new MemSet()));
     insert(make_entry(Intrinsic::memcpy, new MemCopy()));
+    insert(make_entry(Intrinsic::fmuladd, new FMulAdd()));
     insert(make_entry(Intrinsic::ctlz, new CountLeadingZeros()));
     insert(make_entry(Intrinsic::cttz, new CountTrailingZeros()));
-    insert(make_entry(Intrinsic::fmuladd, new FMulAdd()));
+    insert(make_entry(Intrinsic::uadd_with_overflow, new UAddWithOverflow()));
+    insert(make_entry(Intrinsic::sadd_with_overflow, new SAddWithOverflow()));
+    insert(make_entry(Intrinsic::usub_with_overflow, new USubWithOverflow()));
+    insert(make_entry(Intrinsic::ssub_with_overflow, new SSubWithOverflow()));
     insert(make_entry(Intrinsic::umul_with_overflow, new UMulWithOverflow()));
     insert(make_entry(Intrinsic::smul_with_overflow, new SMulWithOverflow()));
+    //insert(make_entry(Intrinsic::sdiv_with_overflow, new SDivWithOverflow()));
   }
 
   const CLIntrinsic *CLIntrinsicMap::get(unsigned Opcode) const {
