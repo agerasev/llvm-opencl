@@ -554,10 +554,13 @@ namespace llvm_opencl {
       for (std::string d : dim) {
         std::string vt = t + d;
         for (std::string as : addrspace) {
-          add_wrappers({
-            Func(vt, "vload"+d, {"uint", t+" const"+as+"*"}),
-            Func("void", "vstore"+d, {vt, "uint", t+as+"*"}),
-          });
+          // Cover 32-bit and 64-bit targets
+          for (std::string idx : {"uint", "ulong"}) {
+            add_wrappers({
+              Func(vt, "vload"+d, {idx, t+" const"+as+"*"}),
+              Func("void", "vstore"+d, {vt, idx, t+as+"*"}),
+            });
+          }
         }
       }
     }

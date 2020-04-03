@@ -2916,15 +2916,13 @@ void CWriter::writeMemoryAccess(Value *Operand, Type *OperandType,
     return;
   }
 
-#ifdef WARN_UNALIGNED
   if (Alignment && Alignment < TD->getABITypeAlignment(OperandType)) {
-    outs() << "Warning: unaligned memory access:\n" << *CurInstr;
-    outs() << "\nat ";
+    outs() << "Warning: unaligned memory access: " << *CurInstr;
+    outs() << " ; ";
     CurInstr->getDebugLoc().print(outs());
     outs() << "\n";
     //errorWithMessage("Unaligned memory access is restricted");
   }
-#endif // WARN_UNALIGNED
 
   Out << '*';
   if (IsVolatile) {
