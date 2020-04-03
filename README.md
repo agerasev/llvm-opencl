@@ -2,6 +2,8 @@
 
 LLVM to OpenCL C Translator.
 
+*Forked from [JuliaComputing/llvm-cbe](https://github.com/JuliaComputing/llvm-cbe).*
+
 ## Installation instructions
 
 This version of the LLVM-OpenCL library works with LLVM 9.0. You will have to compile this version of LLVM before you try to use LLVM-OpenCL. This guide will walk you through the compilation and installation of both tools and show usage statements to verify that the LLVM-OpenCL library is compiled correctly.
@@ -67,12 +69,3 @@ python3 run.py kernel.gen.cl
 cd llvm-project/llvm/projects/llvm-opencl
 python3 -m test
 ```
-
-## TODO
-
-+ Images
-+ Atomics and memory fences
-
-## Known issues
-
-+ OpenCL 1.2 has no support for generic address space introduced in OpenCL 2.x. So generic address space pointers are treated as `__private` address space pointers, other address spaces should be explicitly specified.
