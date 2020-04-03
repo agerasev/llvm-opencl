@@ -631,8 +631,7 @@ CWriter::printFunctionProto(raw_ostream &Out, FunctionType *FTy,
   AttributeList &PAL = Attrs.first;
 
   // Should this function actually return a struct by-value?
-  bool isStructReturn = PAL.hasAttribute(1, Attribute::StructRet) ||
-                        PAL.hasAttribute(2, Attribute::StructRet);
+  bool isStructReturn = PAL.hasAttribute(1, Attribute::StructRet);
   // Get the return type for the function.
   Type *RetTy;
   if (!isStructReturn)
@@ -641,9 +640,7 @@ CWriter::printFunctionProto(raw_ostream &Out, FunctionType *FTy,
     // If this is a struct-return function, print the struct-return type.
     RetTy = cast<PointerType>(FTy->getParamType(0))->getElementType();
   }
-  printTypeName(Out, RetTy,
-                /*isSigned=*/
-                PAL.hasAttribute(AttributeList::ReturnIndex, Attribute::SExt));
+  printTypeName(Out, RetTy);
 
   switch (Attrs.second) {
   case CallingConv::C:
@@ -663,13 +660,13 @@ CWriter::printFunctionProto(raw_ostream &Out, FunctionType *FTy,
   unsigned Idx = 1;
   bool PrintedArg = false;
   FunctionType::param_iterator I = FTy->param_begin(), E = FTy->param_end();
-  Function::arg_iterator ArgName =
-      ArgList ? ArgList->begin() : Function::arg_iterator();
+  Function::arg_iterator ArgName = ArgList ? ArgList->begin() : Function::arg_iterator();
 
   // If this is a struct-return function, don't print the hidden
   // struct-return argument.
   if (isStructReturn) {
     cwriter_assert(I != E && "Invalid struct return function!");
+    //GetValueName(ArgName); // Reserve value name
     ++I;
     ++Idx;
     if (ArgList)
@@ -678,18 +675,21 @@ CWriter::printFunctionProto(raw_ostream &Out, FunctionType *FTy,
 
   for (; I != E; ++I) {
     Type *ArgTy = *I;
-    if (PAL.hasAttribute(Idx, Attribute::ByVal)) {
+    bool isByVal = PAL.hasAttribute(Idx, Attribute::ByVal);
+    if (isByVal) {
       cwriter_assert(ArgTy->isPointerTy());
       ArgTy = cast<PointerType>(ArgTy)->getElementType();
     }
     if (PrintedArg)
       Out << ", ";
-    printTypeName(Out, ArgTy,
-                           /*isSigned=*/PAL.hasAttribute(Idx, Attribute::SExt));
+    printTypeName(Out, ArgTy);
     PrintedArg = true;
     ++Idx;
     if (ArgList) {
       Out << ' ' << GetValueName(ArgName);
+      if (isByVal) {
+        Out << "_val";
+      }
       ++ArgName;
     }
   }
@@ -2236,9 +2236,6 @@ static inline bool isFPIntBitCast(Instruction &I) {
 }
 
 void CWriter::printFunction(Function &F) {
-  /// isStructReturn - Should this function actually return a struct by-value?
-  bool isStructReturn = F.hasStructRetAttr();
-
   cwriter_assert(!F.isDeclaration());
   if (F.hasLocalLinkage())
     Out << "static ";
@@ -2250,17 +2247,28 @@ void CWriter::printFunction(Function &F) {
 
   Out << " {\n";
 
-  // If this is a struct return function, handle the result with magic.
-  if (isStructReturn) {
+  Function::arg_iterator A = F.arg_begin(), E = F.arg_end();
+  if (F.hasStructRetAttr()) {
     Type *StructTy =
-        cast<PointerType>(F.arg_begin()->getType())->getElementType();
+        cast<PointerType>(A->getType())->getElementType();
+    std::string sret_name = GetValueName(A);
     Out << "  ";
-    printTypeName(Out, StructTy, false)
-        << " sret;  /* Struct return temporary */\n";
+    printTypeName(Out, StructTy)
+        << " " << sret_name << "_sret;  /* Struct return temporary */\n";
 
     Out << "  ";
-    printTypeName(Out, F.arg_begin()->getType(), false);
-    Out << GetValueName(F.arg_begin()) << " = &sret;\n";
+    printTypeName(Out, A->getType());
+    Out << " " << sret_name << " = &" << sret_name << "_sret;\n";
+
+    ++A;
+  }
+  for (;A != E; ++A) {
+    if (A->hasByValAttr()) {
+      std::string val_name = GetValueName(A);
+      Out << "  ";
+      printTypeName(Out, A->getType());
+      Out << " " << val_name << " = &" << val_name << "_val;\n";
+    }
   }
 
   bool PrintedVar = false;
@@ -2273,7 +2281,7 @@ void CWriter::printFunction(Function &F) {
                                                         AI->getAllocatedType());
       Out << "  ";
 
-      printTypeName(Out, AI->getAllocatedType(), false) << ' ';
+      printTypeName(Out, AI->getAllocatedType()) << ' ';
       Out << GetValueName(AI);
       if (IsOveraligned)
         Out << " __attribute__((aligned(" << Alignment << ")))";
@@ -2370,10 +2378,9 @@ void CWriter::visitReturnInst(ReturnInst &I) {
   CurInstr = &I;
 
   // If this is a struct return function, return the temporary struct.
-  bool isStructReturn = I.getParent()->getParent()->hasStructRetAttr();
-
-  if (isStructReturn) {
-    Out << "  return sret;\n";
+  Function *F = I.getParent()->getParent();
+  if (F->hasStructRetAttr()) {
+    Out << "  return " << GetValueName(F->arg_begin()) << "_sret;\n";
     return;
   }
 
@@ -2762,7 +2769,6 @@ void CWriter::visitCallInst(CallInst &I) {
   // If this is a call to a struct-return function, assign to the first
   // parameter instead of passing it to the call.
   const AttributeList &PAL = I.getAttributes();
-  //bool hasByVal = I.hasByValArgument();
   bool isStructRet = I.hasStructRetAttr();
   if (isStructRet) {
     writeOperandDeref(I.getArgOperand(0));
@@ -2885,16 +2891,15 @@ void CWriter::writeMemoryAccess(Value *Operand, Type *OperandType,
     return;
   }
 
-  bool IsUnaligned =
-      Alignment && Alignment < TD->getABITypeAlignment(OperandType);
-
-  if (IsUnaligned) {
+#ifdef WARN_UNALIGNED
+  if (Alignment && Alignment < TD->getABITypeAlignment(OperandType)) {
     outs() << "Warning: unaligned memory access:\n" << *CurInstr;
     outs() << "\nat ";
     CurInstr->getDebugLoc().print(outs());
     outs() << "\n";
-    //errorWithMessage("Unaligned memory access not supported");
+    //errorWithMessage("Unaligned memory access is restricted");
   }
+#endif // WARN_UNALIGNED
 
   Out << '*';
   if (IsVolatile) {
