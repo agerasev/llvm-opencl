@@ -28,9 +28,9 @@ bool CLTargetMachine::addPassesToEmitFile(PassManagerBase &PM,
 #endif
                                          CodeGenFileType FileType,
                                          bool DisableVerify,
-                                         MachineModuleInfo *MMI) {
+                                         MachineModuleInfoWrapperPass *MMI) {
 
-  if (FileType != TargetMachine::CGFT_AssemblyFile)
+  if (FileType != CGFT_AssemblyFile)
     return true;
 
   PM.add(new TargetPassConfig(*this, PM));

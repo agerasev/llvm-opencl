@@ -55,11 +55,9 @@ public:
   /// Add passes to the specified pass manager to get the specified file
   /// emitted.  Typically this will involve several steps of code generation.
   bool addPassesToEmitFile(PassManagerBase &PM, raw_pwrite_stream &Out,
-#if LLVM_VERSION_MAJOR >= 7
                            raw_pwrite_stream *DwoOut,
-#endif
                            CodeGenFileType FileType, bool DisableVerify = true,
-                           MachineModuleInfo *MMI = nullptr) override;
+                           MachineModuleInfoWrapperPass *MMI = nullptr) override;
 
   // TargetMachine interface
   const TargetSubtargetInfo *getSubtargetImpl(const Function &) const override;

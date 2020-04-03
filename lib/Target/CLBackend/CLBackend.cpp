@@ -1855,7 +1855,7 @@ void CWriter::generateHeader(Module &M) {
     Out << "static ";
     printTypeName(Out, OpTy);
     Out << " ";
-    if (opcode == BinaryNeg) {
+    if (opcode == BinaryNeg || opcode == Instruction::FNeg) {
       Out << "llvm_neg_";
       printTypeString(Out, OpTy);
       Out << "(";
@@ -1882,9 +1882,10 @@ void CWriter::generateHeader(Module &M) {
 
     printPadded(Out, OpTy, [&]() {
       printWithCast(Out, OpTy, false, [&]() {
-        if (opcode == BinaryNeg || opcode == BinaryNot) {
+        if (opcode == BinaryNeg || opcode == BinaryNot || opcode == Instruction::FNeg) {
           switch(opcode) {
           case BinaryNeg:
+          case Instruction::FNeg:
             Out << "-";
             break;
           case BinaryNot:
@@ -2568,6 +2569,25 @@ void CWriter::visitPHINode(PHINode &I) {
   Out << "_phi";
 }
 
+void CWriter::visitUnaryOperator(UnaryOperator &I) {
+  CurInstr = &I;
+  Type *Ty = I.getOperand(0)->getType();
+  unsigned opcode = I.getOpcode();
+  switch (opcode) {
+  case Instruction::FNeg:
+    Out << "llvm_neg_";
+    printTypeString(Out, Ty);
+    Out << "(";
+    writeOperand(I.getOperand(0));
+    Out << ")";
+    InlineOpDeclTypes.insert(std::pair<unsigned, Type *>(opcode, Ty));
+    break;
+  default:
+    errs() << "Unknown unary operator: " << I << "\n";
+    errorWithMessage("Unknown unary operator");
+  }
+}
+
 void CWriter::visitBinaryOperator(BinaryOperator &I) {
   using namespace PatternMatch;
 
@@ -2854,7 +2874,7 @@ bool CWriter::visitBuiltinCall(CallInst &I, Intrinsic::ID ID) {
     return false;
   } else {
     errs() << "Unsupported LLVM intrinsic: " << I << "\n";
-    errorWithMessage("Unsupported llvm instrinsic");
+    errorWithMessage("Unsupported llvm intrinsic");
   }
 }
 

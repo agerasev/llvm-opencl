@@ -76,7 +76,7 @@ __kernel void kernel_main(
     lt[i] = a[i] < b[i];
     le[i] = a[i] <= b[i];
     
-    bit_not[i] = ~a[i];
+    bit_not[i] = !a[i];
     bit_and[i] = a[i] & b[i];
     bit_or[i] = a[i] | b[i];
     bit_xor[i] = a[i] ^ b[i];

@@ -247,6 +247,7 @@ private:
   }
 
   void visitPHINode(PHINode &I);
+  void visitUnaryOperator(UnaryOperator &I);
   void visitBinaryOperator(BinaryOperator &I);
   void visitICmpInst(ICmpInst &I);
   void visitFCmpInst(FCmpInst &I);

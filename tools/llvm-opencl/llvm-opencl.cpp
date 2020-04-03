@@ -28,6 +28,7 @@
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/MC/SubtargetFeature.h"
 #include "llvm/Pass.h"
+#include "llvm/InitializePasses.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FileSystem.h"
@@ -105,11 +106,11 @@ static ToolOutputFile *GetOutputStream(const char *TargetName,
       OutputFilename = GetFileNameRoot(InputFilename);
 
       switch (FileType) {
-      case TargetMachine::CGFT_AssemblyFile:
-      case TargetMachine::CGFT_ObjectFile:
+      case CGFT_AssemblyFile:
+      case CGFT_ObjectFile:
         OutputFilename += ".gen.cl";
         break;
-      case TargetMachine::CGFT_Null:
+      case CGFT_Null:
         OutputFilename += ".null";
         break;
       }
@@ -119,10 +120,10 @@ static ToolOutputFile *GetOutputStream(const char *TargetName,
   // Decide if we need "binary" output.
   bool Binary = false;
   switch (FileType) {
-  case TargetMachine::CGFT_AssemblyFile:
+  case CGFT_AssemblyFile:
     break;
-  case TargetMachine::CGFT_ObjectFile:
-  case TargetMachine::CGFT_Null:
+  case CGFT_ObjectFile:
+  case CGFT_Null:
     Binary = true;
     break;
   }
@@ -297,7 +298,7 @@ static int compileModule(char **argv, LLVMContext &Context) {
   PM.add(createTargetTransformInfoWrapperPass(Target.getTargetIRAnalysis()));
 
   if (RelaxAll) {
-    if (FileType != TargetMachine::CGFT_ObjectFile)
+    if (FileType != CGFT_ObjectFile)
       errs() << argv[0]
              << ": warning: ignoring -mc-relax-all because filetype != obj\n";
   }
