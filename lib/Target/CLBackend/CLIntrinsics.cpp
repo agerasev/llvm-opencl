@@ -3,6 +3,7 @@
 #include <queue>
 
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/ADT/APInt.h"
 
 #include "StringTools.h"
 
@@ -32,6 +33,13 @@ namespace llvm_opencl {
 
     void printTypeName(raw_ostream &Out, Type *Ty, bool isSigned=false) const {
       printTy(Out, Ty, isSigned);
+    }
+    std::string getTypeName(Type *Ty, bool isSigned=false) const {
+      std::string str;
+      raw_string_ostream out(str);
+      printTypeName(out, Ty, isSigned);
+      out.str();
+      return str;
     }
 
     virtual void printContent(raw_ostream &Out) = 0;
@@ -89,8 +97,7 @@ namespace llvm_opencl {
           << "  }\n";
     }
   };
-
-  class MemCpy : public IntrinsicGenerator {
+  class MemCopy : public IntrinsicGenerator {
   public:
     void printContent(raw_ostream &Out) override {
       Out << "  for (uint i = 0; i < c; ++i) {\n"
@@ -105,6 +112,79 @@ namespace llvm_opencl {
       Out << "  return fma(a, b, c);\n";
     }
   };
+  class CountLeadingZeros : public IntrinsicGenerator {
+  public:
+    void printContent(raw_ostream &Out) override {
+      Out << "  return clz(a);\n";
+    }
+  };
+  class CountTrailingZeros : public IntrinsicGenerator {
+  public:
+    void printContent(raw_ostream &Out) override {
+      Out << "  return ctz(a);\n";
+    }
+  };
+  /*
+  class UAddWithOverflow : public IntrinsicGenerator {
+  public:
+    void printContent(raw_ostream &Out) override {
+      
+    }
+  };
+  class SAddWithOverflow : public IntrinsicGenerator {
+  public:
+    void printContent(raw_ostream &Out) override {
+      
+    }
+  };
+  */
+  class UMulWithOverflow : public IntrinsicGenerator {
+  public:
+    void printContent(raw_ostream &Out) override {
+      Type *Ty = funT->getParamType(0);
+      int N = Ty->getIntegerBitWidth();
+
+      Out << "  " << getTypeName(funT->getReturnType()) << " r;\n";
+
+      Out << "  if (clz(a) + clz(b) + 2 <= " << N << ") {\n"
+          << "    r.f0 = a*b;\n"
+          << "    r.f1 = -1;\n"
+          << "    return r;\n"
+          << "  }\n";
+
+      Out << "  r.f0 = (a >> 1)*b;\n"
+          << "  r.f1 = -((" << getTypeName(Ty, true) << ")r.f0 < 0);\n"
+          << "  r.f0 <<= 1;\n";
+
+      Out << "  if (a & 1) {\n"
+          << "    r.f0 += b;\n"
+          << "    if (r.f0 < b) {\n"
+          << "      r.f1 = -1;\n"
+          << "    }\n"
+          << "  }\n"
+          << "  return r;\n";
+    }
+  };
+  class SMulWithOverflow : public IntrinsicGenerator {
+  public:
+    void printContent(raw_ostream &Out) override {
+      Type *Ty = funT->getParamType(0);
+      std::string uty = getTypeName(Ty, false),
+                  sty = getTypeName(Ty, true);
+
+      Out << "  " << getTypeName(funT->getReturnType()) << " r;\n";
+
+      Out << "  r.f0 = a*b;\n"
+          << "  if (a != 0 && b != 0) {\n"
+          << "    r.f1 = -((" << sty << ")r.f0/(" << sty <<
+             ")b != (" << sty << ")a || (" << sty << ")r.f0/(" <<
+             sty << ")a != (" << sty << ")b);\n"
+          << "  } else {\n"
+          << "    r.f0 = 0;\n"
+          << "  }\n"
+          << "  return r;\n";
+    }
+  };
 
   static std::pair<unsigned, std::unique_ptr<CLIntrinsic>> make_entry(unsigned Opcode, IntrinsicGenerator *gen) {
     return std::make_pair(Opcode, std::unique_ptr<CLIntrinsic>(new IntrinsicGeneratorWraper(gen)));
@@ -116,9 +196,12 @@ namespace llvm_opencl {
 
   CLIntrinsicMap::CLIntrinsicMap() {
     insert(make_entry(Intrinsic::memset, new MemSet()));
-    insert(make_entry(Intrinsic::memcpy, new MemCpy()));
+    insert(make_entry(Intrinsic::memcpy, new MemCopy()));
+    insert(make_entry(Intrinsic::ctlz, new CountLeadingZeros()));
+    insert(make_entry(Intrinsic::cttz, new CountTrailingZeros()));
     insert(make_entry(Intrinsic::fmuladd, new FMulAdd()));
-    //insert(make_entry(Intrinsic::smul_with_overflow, new SMulWithOverflow()));
+    insert(make_entry(Intrinsic::umul_with_overflow, new UMulWithOverflow()));
+    insert(make_entry(Intrinsic::smul_with_overflow, new SMulWithOverflow()));
   }
 
   const CLIntrinsic *CLIntrinsicMap::get(unsigned Opcode) const {

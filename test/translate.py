@@ -62,17 +62,15 @@ def frontend(src, ir, opt=3, ty=None, std=None):
 
         elif (ty and ty == "rs") or (not ty and src.endswith(".rs")):
             # Rust library, you need to have `rustc` installed
-            rsir = ".rs.".join(ir.rsplit(".", 1))
-            args = [
+            rsir = "{}.o{}.rs.gen.ll".format(src, opt)
+            run([
                 "rustc", "--emit=llvm-ir",
                 # Use `wasm32` because rustc cannot compile to `spir`
                 "--target=wasm32-unknown-unknown",
                 "--crate-type=lib",
-            ]
-            if opt >= 2:
-                args.append("-O")
-            args.extend([src, "-o", rsir])
-            run(args, check=True)
+                "-C", "opt-level={}".format(opt),
+                src, "-o", rsir,
+            ], check=True)
 
             # Translate `wasm32` to `spir` target
             run([

@@ -15,8 +15,8 @@ namespace llvm_opencl {
   public:
     virtual ~CLIntrinsic() = default;
     virtual void printDefinition(
-      raw_ostream &Out, FunctionType *funT,
-      std::string OpName, std::function<void(raw_ostream&, Type*, bool)> printTy
+      raw_ostream &Out, FunctionType *funT, std::string OpName,
+      std::function<void(raw_ostream&, Type*, bool)> printTy
     ) const = 0;
   };
 

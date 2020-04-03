@@ -35,7 +35,10 @@ class Tester:
                 assert np.allclose(f, s)
             except AssertionError as e:
                 raise AssertionError(
-                    "Mismatch in buffer {}".format(i)
+                    "\n".join([
+                        "Mismatch in buffer {}".format(i),
+                        str(f), "!=", str(s),
+                    ])
                 ) from e
 
     def test(self, src, **kws):

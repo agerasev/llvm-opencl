@@ -602,7 +602,7 @@ raw_ostream &CWriter::printStructDeclaration(raw_ostream &Out,
     bool empty = isEmptyType(*I);
     if (empty)
       Out << "/* "; // skip zero-sized types
-    printTypeName(Out, *I) << " field" << utostr(Idx);
+    printTypeName(Out, *I) << " f" << utostr(Idx);
     if (empty)
       Out << " */"; // skip zero-sized types
     else
@@ -714,7 +714,7 @@ raw_ostream &CWriter::printArrayDeclaration(raw_ostream &Out, ArrayType *ATy) {
   // value semantics (avoiding the array "decay").
   Out << getArrayName(ATy) << " {\n  ";
   printTypeName(Out, ATy->getElementType());
-  Out << " array[" << utostr(ATy->getNumElements()) << "];\n};\n";
+  Out << " a[" << utostr(ATy->getNumElements()) << "];\n};\n";
   return Out;
 }
 
@@ -1998,9 +1998,9 @@ void CWriter::generateHeader(Module &M) {
         if (isEmptyType(ElTy))
           continue;
         if (STy)
-          Out << "\n  r.field" << i << " = x" << i << ";";
+          Out << "\n  r.f" << i << " = x" << i << ";";
         else if (ATy)
-          Out << "\n  r.array[" << i << "] = x" << i << ";";
+          Out << "\n  r.a[" << i << "] = x" << i << ";";
         else
           cwriter_assert(0);
       }
@@ -2827,11 +2827,11 @@ void CWriter::printGEPExpression(Value *Ptr, gep_type_iterator I,
     std::string prev = mod.cut_tail(); // Extract Out changes
 
     if (IntoT->isStructTy()) {
-      Out << "(&" << prev << "->field"
+      Out << "(&" << prev << "->f"
           << cast<ConstantInt>(I.getOperand())->getZExtValue()
           << ")";
     } else if (IntoT->isArrayTy()) {
-      Out << "(&" << prev << "->array[";
+      Out << "(&" << prev << "->a[";
       writeOperandWithCast(I.getOperand(), Instruction::GetElementPtr);
       Out << "])";
     } else if (IntoT->isVectorTy()) {
@@ -3040,9 +3040,9 @@ void CWriter::visitInsertValueInst(InsertValueInst &IVI) {
         IVI.getOperand(0)->getType(), makeArrayRef(b, i));
     cwriter_assert(IndexedTy);
     if (IndexedTy->isArrayTy())
-      Out << ".array[" << *i << "]";
+      Out << ".a[" << *i << "]";
     else
-      Out << ".field" << *i;
+      Out << ".f" << *i;
   }
   Out << " = ";
   writeOperand(IVI.getOperand(1));
@@ -3063,9 +3063,9 @@ void CWriter::visitExtractValueInst(ExtractValueInst &EVI) {
       Type *IndexedTy = ExtractValueInst::getIndexedType(
           EVI.getOperand(0)->getType(), makeArrayRef(b, i));
       if (IndexedTy->isArrayTy())
-        Out << ".array[" << *i << "]";
+        Out << ".a[" << *i << "]";
       else
-        Out << ".field" << *i;
+        Out << ".f" << *i;
     }
   }
   Out << ")";
