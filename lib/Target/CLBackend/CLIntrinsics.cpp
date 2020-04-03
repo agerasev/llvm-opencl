@@ -266,13 +266,6 @@ namespace llvm_opencl {
   }
 
   bool CLIntrinsicMap::hasImpl(unsigned Opcode) const {
-    switch (Opcode) {
-    case Intrinsic::not_intrinsic:
-    case Intrinsic::dbg_value:
-    case Intrinsic::dbg_declare:
-      return true;
-    default:
-      return get(Opcode) != nullptr;
-    }
+    return get(Opcode) != nullptr;
   }
 } // namespace llvm_opencl  

@@ -53,10 +53,10 @@ clang-9 -S -emit-llvm \
   -x cl -std=cl1.2 \
   -Xclang -finclude-default-header \
   -O3 \
-  kernel.cl -o kernel.ll
+  kernel.cl -o kernel.gen.ll
 
 # Translate LLVM IR code back to OpenCL C
-llvm-opencl kernel.ll -o kernel.gen.cl
+llvm-opencl kernel.gen.ll -o kernel.gen.cl
 
 # Run translated code with OpenCL
 python3 run.py kernel.gen.cl

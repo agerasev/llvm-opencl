@@ -23,7 +23,7 @@ class Tester:
 
     def translate(self, src, **kws):
         opt = kws["opt"]
-        fe = {"opt": opt}
+        fe = {"opt": opt, "debug": kws.get("debug", False)}
         if "std" in kws:
             fe["std"] = kws["std"]
         return translate(src, suffix="o{}".format(opt), fe=fe)

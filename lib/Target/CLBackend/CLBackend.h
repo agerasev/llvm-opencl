@@ -193,6 +193,8 @@ private:
   void writeMemoryAccess(Value *Operand, Type *OperandType, bool IsVolatile,
                          unsigned Alignment);
 
+  bool isInstIgnored(Instruction &I) const;
+  bool isIntrinsicIgnored(unsigned ID) const;
   bool lowerIntrinsics(Function &F);
   /// Prints the definition of the intrinsic function F. Supports the
   /// intrinsics which need to be explicitly defined in the CLBackend.

@@ -1517,7 +1517,7 @@ void CWriter::generateHeader(Module &M) {
     // Don't print declarations for intrinsic functions.
     // Store the used intrinsics, which need to be explicitly defined.
     if (I->isIntrinsic()) {
-      if (intrinsics.get(I->getIntrinsicID()) != nullptr) {
+      if (intrinsics.hasImpl(I->getIntrinsicID())) {
         intrinsicsToDefine.push_back(&*I);
       }
       continue;
@@ -2256,11 +2256,11 @@ void CWriter::printFunction(Function &F) {
         cast<PointerType>(F.arg_begin()->getType())->getElementType();
     Out << "  ";
     printTypeName(Out, StructTy, false)
-        << " StructReturn;  /* Struct return temporary */\n";
+        << " sret;  /* Struct return temporary */\n";
 
     Out << "  ";
     printTypeName(Out, F.arg_begin()->getType(), false);
-    Out << GetValueName(F.arg_begin()) << " = &StructReturn;\n";
+    Out << GetValueName(F.arg_begin()) << " = &sret;\n";
   }
 
   bool PrintedVar = false;
@@ -2350,10 +2350,9 @@ void CWriter::printBasicBlock(BasicBlock *BB) {
       Out << "#line " << Loc->getLine() << " \"" << Loc->getDirectory() << "/" << Loc->getFilename() << "\"" << "\n";
       LastAnnotatedSourceLine = Loc->getLine();
     }
-    if (!isInlinableInst(*II) && !isDirectAlloca(&*II)) {
+    if (!isInstIgnored(*II) && !isInlinableInst(*II) && !isDirectAlloca(&*II)) {
       if (!isEmptyType(II->getType()))
         outputLValue(&*II);
-
       else
         Out << "  ";
       writeInstComputationInline(*II);
@@ -2374,7 +2373,7 @@ void CWriter::visitReturnInst(ReturnInst &I) {
   bool isStructReturn = I.getParent()->getParent()->hasStructRetAttr();
 
   if (isStructReturn) {
-    Out << "  return StructReturn;\n";
+    Out << "  return sret;\n";
     return;
   }
 
@@ -2655,6 +2654,28 @@ void CWriter::visitSelectInst(SelectInst &I) {
   ));
 }
 
+bool CWriter::isInstIgnored(Instruction &I) const {
+  if (CallInst *CI = dyn_cast<CallInst>(&I)) {
+    if (Function *F = CI->getCalledFunction()) {
+      if (F->isIntrinsic() && isIntrinsicIgnored(F->getIntrinsicID())) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool CWriter::isIntrinsicIgnored(unsigned ID) const {
+  switch (ID) {
+  case Intrinsic::not_intrinsic:
+  case Intrinsic::dbg_value:
+  case Intrinsic::dbg_declare:
+    return true;
+  default:
+    return false;
+  }
+}
+
 void CWriter::printIntrinsicDefinition(FunctionType *funT, unsigned Opcode,
                                        std::string OpName, raw_ostream &Out) {
   const CLIntrinsic *intr = intrinsics.get(Opcode);
@@ -2687,7 +2708,11 @@ bool CWriter::lowerIntrinsics(Function &F) {
     for (BasicBlock::iterator I = BB.begin(), E = BB.end(); I != E;) {
       if (CallInst *CI = dyn_cast<CallInst>(I++)) {
         if (Function *F = CI->getCalledFunction()) {
-          if (!intrinsics.hasImpl(F->getIntrinsicID())) {
+          if (
+            F->isIntrinsic() &&
+            !isIntrinsicIgnored(F->getIntrinsicID()) &&
+            !intrinsics.hasImpl(F->getIntrinsicID())
+          ) {
             // All other intrinsic calls we must lower.
             LoweredAny = true;
 
@@ -2792,12 +2817,13 @@ void CWriter::visitCallInst(CallInst &I) {
 bool CWriter::visitBuiltinCall(CallInst &I, Intrinsic::ID ID) {
   CurInstr = &I;
 
-  if (intrinsics.hasImpl(ID)) {
-    return intrinsics.get(ID) == nullptr;
+  if (isIntrinsicIgnored(ID)) {
+    return true;
+  } else if (intrinsics.hasImpl(ID)) {
+    return false;
   } else {
     errs() << "Unsupported LLVM intrinsic: " << I << "\n";
     errorWithMessage("Unsupported llvm instrinsic");
-    return false;
   }
 }
 
