@@ -1,4 +1,4 @@
-typedef struct {
+typedef struct __attribute__((aligned(8))) { // to prevent unaligned access warning
     int x;
     float y;
 } A;

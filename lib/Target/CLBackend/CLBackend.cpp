@@ -218,15 +218,13 @@ std::string CWriter::getArrayName(ArrayType *AT) {
   // Arrays are wrapped in structs to allow them to have normal
   // value semantics (avoiding the array "decay").
   cwriter_assert(!isEmptyType(AT));
-  printTypeName(ArrayInnards, AT->getElementType());
-  return "struct array_" + utostr(AT->getNumElements()) + '_' +
-         CBEMangle(ArrayInnards.str());
+  printTypeString(ArrayInnards, AT->getElementType());
+  return "struct array_" + utostr(AT->getNumElements()) + '_' + ArrayInnards.str();
 }
 
 std::string CWriter::getVectorName(VectorType *VT, bool Aligned, bool isSigned) {
   std::string astr;
   raw_string_ostream VectorInnards(astr);
-  // Vectors are handled like arrays
   cwriter_assert(!isEmptyType(VT));
 
   uint64_t n = VT->getNumElements();
