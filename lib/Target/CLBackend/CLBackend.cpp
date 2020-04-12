@@ -1801,7 +1801,7 @@ void CWriter::generateHeader(Module &M) {
       } else if (DstTy->isIntOrIntVectorTy() || DstTy->isFPOrFPVectorTy()) {
         Out << "  return as_";
         printTypeName(Out, DstTy);
-        Out << "(in);";
+        Out << "(in);\n";
       } else {
         Out << "  union {\n    ";
         printTypeName(Out, SrcTy, false);
@@ -2250,15 +2250,6 @@ void CWriter::printContainedTypes(raw_ostream &Out, Type *Ty,
   }
 }
 
-static inline bool isFPIntBitCast(Instruction &I) {
-  if (!isa<BitCastInst>(I))
-    return false;
-  Type *SrcTy = I.getOperand(0)->getType();
-  Type *DstTy = I.getType();
-  return (SrcTy->isFloatingPointTy() && DstTy->isIntegerTy()) ||
-         (DstTy->isFloatingPointTy() && SrcTy->isIntegerTy());
-}
-
 void CWriter::printFunction(Function &F) {
   cwriter_assert(!F.isDeclaration());
   if (F.hasLocalLinkage())
@@ -2323,12 +2314,6 @@ void CWriter::printFunction(Function &F) {
         Out << ";\n";
       }
       PrintedVar = true;
-    }
-    // We need a temporary for the BitCast to use so it can pluck a value out
-    // of a union to do the BitCast. This is separate from the need for a
-    // variable to hold the result of the BitCast.
-    if (isFPIntBitCast(*I)) {
-      errorWithMessage("Bit cast is not implemented");
     }
   }
 
@@ -3143,12 +3128,17 @@ void CWriter::visitExtractValueInst(ExtractValueInst &EVI) {
   Out << ")";
 }
 
-LLVM_ATTRIBUTE_NORETURN void CWriter::errorWithMessage(const char *message) const {
+LLVM_ATTRIBUTE_NORETURN void CWriter::errorWithMessage(
+  const char *message, const Instruction *I
+) const {
   errs() << message;
   errs() << " in:\n";
-  if (CurInstr != nullptr) {
-    errs() << *CurInstr << "\nat ";
-    CurInstr->getDebugLoc().print(errs());
+  if (I == nullptr) {
+    I = CurInstr;
+  }
+  if (I != nullptr) {
+    errs() << *I << "\nat ";
+    I->getDebugLoc().print(errs());
   } else {
     errs() << "<unknown instruction>";
   }

@@ -275,7 +275,9 @@ private:
 
   void outputLValue(Instruction *I) { Out << "  " << GetValueName(I) << " = "; }
 
-  LLVM_ATTRIBUTE_NORETURN void errorWithMessage(const char *message) const;
+  LLVM_ATTRIBUTE_NORETURN void errorWithMessage(
+    const char *message, const Instruction *I=nullptr
+  ) const;
 
   bool isGotoCodeNecessary(BasicBlock *From, BasicBlock *To);
   void printPHICopiesForSuccessor(BasicBlock *CurBlock, BasicBlock *Successor,
