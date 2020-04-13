@@ -191,6 +191,13 @@ raw_ostream &CWriter::printTypeString(raw_ostream &Out, Type *Ty) {
   }
 
   default:
+    Type *FnTy = Ty;
+    while(Ty->isPointerTy()) {
+      FnTy = FnTy->getPointerElementType();
+    }
+    if (FnTy->isFunctionTy()) {
+      errorWithMessage("OpenCL forbids usage of function pointers");
+    }
     errs() << "Unknown primitive type: " << *Ty << "\n";
     errorWithMessage("unknown primitive type");
   }
