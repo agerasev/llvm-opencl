@@ -91,6 +91,8 @@ class CWriter : public FunctionPass, public InstVisitor<CWriter> {
 
   unsigned LastAnnotatedSourceLine = 0;
 
+  std::set<Function *> UsedFunctions;
+
   CLBuiltIns builtins;
   CLIntrinsicMap intrinsics;
 
@@ -113,6 +115,8 @@ public:
 private:
   void generateHeader(Module &M);
   void declareOneGlobalVariable(GlobalVariable *I);
+
+  void markUsed(Function *F);
 
   void forwardDeclareStructs(raw_ostream &Out, Type *Ty,
                              std::set<Type *> &TypesPrinted);

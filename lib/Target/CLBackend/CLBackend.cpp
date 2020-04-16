@@ -92,7 +92,7 @@ bool CWriter::isAddressExposed(Value *V) const {
 // printed and an extra copy of the expr is not emitted.
 bool CWriter::isInlinableInst(Instruction &I) const {
   // TODO_: For now we inline nothing, but need to consider is it reasonable
-  return false;
+  //return false;
 
   // Always inline cmp instructions, even if they are shared by multiple
   // expressions.  GCC generates horrible code if we don't.
@@ -136,7 +136,10 @@ bool CWriter::runOnFunction(Function &F) {
   // Get rid of intrinsics we can't handle.
   bool Modified = lowerIntrinsics(F);
 
-  printFunction(F);
+  if (UsedFunctions.find(&F) != UsedFunctions.end()) {
+    // Function is used
+    printFunction(F);
+  }
 
   LI = nullptr;
 
@@ -1408,6 +1411,19 @@ static void FindStaticTors(GlobalVariable *GV,
     }
 }
 
+void CWriter::markUsed(Function *F) {
+  if (UsedFunctions.insert(F).second) {
+    //outs() << F->getName() << "\n";
+    for (Function::iterator b = F->begin(), be = F->end(); b != be; ++b) {
+      for (BasicBlock::iterator i = b->begin(), ie = b->end(); i != ie; ++i) {
+        if (CallInst* callInst = dyn_cast<CallInst>(&*i)) {
+          markUsed(callInst->getCalledFunction());
+        }
+      }
+    }
+  }
+}
+
 enum SpecialGlobalClass {
   NotSpecial = 0,
   GlobalCtors,
@@ -1453,6 +1469,14 @@ bool CWriter::doInitialization(Module &M) {
   TAsm = new CBEMCAsmInfo();
   MRI = new MCRegisterInfo();
   TCtx = new MCContext(TAsm, MRI, nullptr);
+
+  for (Module::iterator I = M.begin(), E = M.end(); I != E; ++I) {
+    Function *F = &*I;
+    if (F->getCallingConv() == CallingConv::SPIR_KERNEL) {
+      markUsed(F);
+    }
+  }
+
   return false;
 }
 
@@ -1540,6 +1564,11 @@ void CWriter::generateHeader(Module &M) {
 
   // TODO_: Find out why non-intrinsic functions like `memset` are printed.
   for (Module::iterator I = M.begin(), E = M.end(); I != E; ++I) {
+    Function *F = dyn_cast<Function>(&*I);
+    if (F && UsedFunctions.find(F) == UsedFunctions.end()) {
+      // Functions is not used
+      continue;
+    }
     // Don't print declarations for intrinsic functions.
     // Store the used intrinsics, which need to be explicitly defined.
     if (I->isIntrinsic()) {
@@ -2791,6 +2820,10 @@ void CWriter::visitCallInst(CallInst &I) {
 
   // Handle intrinsic function calls first...
   if (Function *F = I.getCalledFunction()) {
+    if (UsedFunctions.find(F) == UsedFunctions.end()) {
+      // Functions is not used
+      return;
+    }
     auto ID = F->getIntrinsicID();
     if (ID != Intrinsic::not_intrinsic && visitBuiltinCall(I, ID))
       return;
