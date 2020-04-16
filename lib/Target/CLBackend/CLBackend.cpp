@@ -673,19 +673,28 @@ CWriter::printFunctionProto(raw_ostream &Out, FunctionType *FTy,
   }
   printTypeName(Out, RetTy);
 
+  bool kernel = false;
   switch (Attrs.second) {
   case CallingConv::C:
     break;
   case CallingConv::SPIR_FUNC:
     break;
   case CallingConv::SPIR_KERNEL:
-    Out << " __kernel";
+    kernel = true;
     break;
   default:
     errs() << "Unhandled calling convention " << Attrs.second << "\n";
     errorWithMessage("Encountered Unhandled Calling Convention");
     break;
   }
+  // FIXME_: Dirty hack to allow kernel to be declared out of OpenCL code
+  if (!kernel && Name.rfind("__kernel_", 0) == 0) {
+    kernel = true;
+  }
+  if (kernel) {
+    Out << " __kernel";
+  }
+
   Out << ' ' << Name << '(';
 
   unsigned Idx = 1;
