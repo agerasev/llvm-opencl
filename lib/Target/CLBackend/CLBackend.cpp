@@ -2618,7 +2618,7 @@ void CWriter::visitBinaryOperator(BinaryOperator &I) {
   Type *Ty = I.getOperand(0)->getType();
   unsigned opcode;
   Value *X;
-  if (match(&I, m_Neg(m_Value(X))) || match(&I, m_FNeg(m_Value(X)))) {
+  if (match(&I, m_Neg(m_Value(X)))) {
     opcode = BinaryNeg;
     Out << "llvm_neg_";
     printTypeString(Out, Ty);
